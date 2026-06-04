@@ -63,17 +63,17 @@ Save a complete `.html` file using this exact structure and CSS:
   body { font-family: Arial, sans-serif; font-size: 10pt; margin: 40px; color: #000; background: #fff; }
   table { border-collapse: collapse; width: 680px; table-layout: auto; }
   th, td { border: 1px solid #888; padding: 5px 8px; font-size: 10pt; }
-  th { background-color: #2748fb; color: #fff; font-weight: bold; text-align: center; white-space: nowrap; }
+  th { background-color: #0000ff; color: #fff; font-weight: bold; text-align: center; white-space: nowrap; }
   .col-no { width: 50px; }
   .col-cost { width: 110px; }
   .no-cell { text-align: center; vertical-align: top; }
   .desc-cell { vertical-align: top; }
   .cost-cell { text-align: right; vertical-align: top; white-space: nowrap; }
-  .divider td { background-color: #2748fb; border: none; height: 10px; padding: 0; }
+  .divider td { background-color: #0000ff; border: none; height: 10px; padding: 0; }
   .sum-label { text-align: right; }
   .sum-value { text-align: right; white-space: nowrap; }
   .sum-bold td { font-weight: bold; }
-  a { color: #2748fb; font-size: 9.5pt; }
+  a { color: #0000ff; font-size: 9.5pt; }
 </style>
 </head>
 <body>
