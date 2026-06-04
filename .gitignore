@@ -1,0 +1,8 @@
+# Customer uploads — do not commit real customer data to git
+uploads/*.json
+!uploads/EXAMPLE*.json
+!uploads/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db

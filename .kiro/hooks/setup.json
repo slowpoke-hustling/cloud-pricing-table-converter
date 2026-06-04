@@ -1,0 +1,12 @@
+{
+  "name": "First Time Setup",
+  "version": "1.0.0",
+  "description": "On first open, check uvx is installed and the AWS Pricing MCP server is reachable",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "which uvx || pip install uv && echo 'uvx ready' && uvx awslabs.aws-pricing-mcp-server@latest --help > /dev/null 2>&1 && echo 'AWS Pricing MCP ready' || echo 'Setup issue — see README'"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "New Pricing JSON Detected",
+  "version": "1.0.0",
+  "description": "When a JSON file is dropped into the upload folder, auto-generate a proposal table",
+  "when": {
+    "type": "fileCreated",
+    "patterns": ["upload json file here/*.json"]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A new pricing calculator JSON file was just added to the 'upload json file here' folder. Read the file, get the customer name from the JSON 'Name' field, then say: 'I found the estimate for **{name}**. Generating your proposal table now...' — then immediately generate the HTML output file following the sales-tools steering instructions. Save the HTML as 'upload json file here/{name}_proposal_table.html' and open it in the browser."
+  }
+}
