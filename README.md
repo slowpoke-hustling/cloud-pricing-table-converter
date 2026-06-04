@@ -9,7 +9,7 @@ Generate copy-paste-ready AWS pricing tables for proposals in seconds.
 Paste this prompt into Kiro:
 
 ```
-Clone the repo at https://github.com/g-asiapacific/pricing-table-generator.git, open the folder in the current workspace, then run the setup hook to install the AWS Pricing MCP server.
+Clone the repo at https://github.com/ky-gap/pricing-table-generator.git, open the folder in the current workspace, then run the setup hook to install the AWS Pricing MCP server.
 ```
 
 Kiro will clone the repo, open it, and install everything automatically.
