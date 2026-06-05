@@ -78,5 +78,17 @@ Generate proposal table for Ayris Logic.json, MYR rate 4.45
 
 ---
 
+## Getting updates
+
+When the tool is updated, pull the latest changes in Kiro chat:
+
+```
+Pull the latest updates from git
+```
+
+Check `CHANGELOG.md` to see what changed in each version.
+
+---
+
 ## Questions?
 Contact your SA team lead.
