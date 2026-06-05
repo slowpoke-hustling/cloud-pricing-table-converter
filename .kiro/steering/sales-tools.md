@@ -199,8 +199,8 @@ Save a complete `.html` file using this exact structure and CSS:
 
 ### ALB
 - Number of Application Load Balancers
-- Application Load Balancer fixed hourly charges (Monthly): `count × ALB_rate × 730`
-- Application Load Balancer LCU usage charges (Monthly): `total_cost - fixed`
+- Application Load Balancer fixed hourly charges (Monthly): use value from JSON if present
+- Application Load Balancer LCU usage charges (Monthly): use value from JSON if present
 
 ### NLB
 - Number of Network Load Balancers
@@ -210,11 +210,11 @@ Save a complete `.html` file using this exact structure and CSS:
 
 ### NAT Gateway
 - Number of NAT Gateways
-- Data Processed per NAT Gateway — reverse-engineer if missing: `(cost - nat_count × rate × 730) / rate`
+- Data Processed per NAT Gateway: use value from JSON if present, otherwise omit
 
 ### Transit Gateway
 - Number of Transit Gateway attachments
-- Ingress data processed per TGW attachment — reverse-engineer if missing: `(cost - attach × rate × 730) / data_rate`
+- Ingress data processed per TGW attachment: use value from JSON if present, otherwise omit
 
 ### VPN
 - Number of Site-to-Site VPN Connections
@@ -224,7 +224,7 @@ Save a complete `.html` file using this exact structure and CSS:
 - Number of Rules added per Web ACL (if present)
 - Number of Rule Groups per Web ACL (if present)
 - Number of Managed Rule Groups per Web ACL (if present)
-- Number of web requests received across all web ACLs — reverse-engineer if missing: `(cost - ACLs×5 - rules×1) / 0.60` million
+- Number of web requests received across all web ACLs (if present in JSON)
 
 ### Fargate
 - Operating system
