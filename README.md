@@ -29,7 +29,7 @@ Tell me when everything is ready or flag any step that failed.
 ### Step 1 — Export your estimate as JSON
 1. Open your [AWS Pricing Calculator](https://calculator.aws) estimate
 2. Click **Export** → **JSON**
-3. Rename the file to your customer name, e.g. `Ayris Logic.json`
+3. Rename the file to your customer name, e.g. `Customer Name.json`
 
 ### Step 2 — Drop the JSON into the upload folder
 Place the file inside the **`upload json file here`** folder in this project.
@@ -37,9 +37,9 @@ Place the file inside the **`upload json file here`** folder in this project.
 ### Step 3 — Ask Kiro to generate the table
 In Kiro chat, type:
 ```
-Generate proposal table for Ayris Logic.json, MYR rate 4.4
+Generate proposal table for Customer Name.json, MYR rate 4.4
 ```
-Replace `Ayris Logic` with your customer name. Adjust the MYR rate to today's rate if needed — check [xe.com](https://www.xe.com/currencyconverter/convert/?Amount=1&From=USD&To=MYR) for the latest.
+Replace `Customer Name` with your customer name. Adjust the MYR rate to today's rate if needed — check [xe.com](https://www.xe.com/currencyconverter/convert/?Amount=1&From=USD&To=MYR) for the latest.
 
 Kiro will:
 - Read the JSON
@@ -65,7 +65,7 @@ Show me all past estimates
 
 **Regenerate with a different MYR rate:**
 ```
-Generate proposal table for Ayris Logic.json, MYR rate 4.45
+Generate proposal table for Customer Name.json, MYR rate 4.45
 ```
 
 ---
