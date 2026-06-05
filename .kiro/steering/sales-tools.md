@@ -9,20 +9,16 @@ Your job is to read AWS Pricing Calculator JSON exports and generate copy-paste-
 
 ---
 
-## CRITICAL: USE THE AWS PRICING MCP FOR ALL LOOKUPS
+## CRITICAL: USE THE AWS PRICING MCP FOR EC2/RDS INSTANCE SPECS ONLY
 
-**Never hardcode instance specs, vCPU, memory, or pricing rates.**
+The only reason to call the AWS Pricing MCP is to look up **vCPU and memory** for EC2 and RDS instance types, since those specs are not included in the JSON export.
 
-For ANY value you don't have directly from the JSON:
-- Use `get_pricing` (awslabs.aws-pricing-mcp-server) to look up instance specs, rates, and pricing
-- This applies to: EC2 vCPU/memory, RDS instance specs, ElastiCache specs, any pricing rate
-
-Examples:
 - Need vCPU/memory for `t4g.2xlarge` → call `get_pricing` with `instanceType: t4g.2xlarge`
-- Need ALB rate → call `get_pricing` for `AWSELB` in `Asia Pacific (Malaysia)`
-- Need NAT Gateway rate → call `get_pricing` for `AmazonEC2` group `NGW:NatGateway`
+- Need vCPU/memory for an RDS instance → call `get_pricing` on `AmazonRDS`
 
 Cache results within the same session — don't call the API twice for the same instance type.
+
+**Do NOT use the MCP to look up rates, reverse-engineer costs, or calculate any values. All other data comes directly from the JSON.**
 
 ---
 
@@ -172,190 +168,15 @@ Save a complete `.html` file using this exact structure and CSS:
 
 ## WHAT TO INCLUDE PER SERVICE
 
-**Include ALL properties from the JSON exactly as they appear.** Do not filter, skip, or omit any field — just copy them straight from the JSON into the table. The only exceptions are fields with obviously zero/empty values that add no information (e.g. `DT Inbound: 0 TB per month`, `DT Outbound: Not selected: 0 TB per month`).
+**The rule is simple: copy ALL properties from the JSON exactly as they appear, for every service.**
 
-### EC2
-- Region (Malaysia / Singapore)
-- Operating system
-- Number of instances
-- Advance EC2 instance (type)
-- vCPU + Memory (look up from MCP)
-- Pricing strategy (short form: "On Demand" / "Compute Savings Plans 1yr No Upfront" / "Compute Savings Plans 3yr No Upfront" / "Reserved 1yr No Upfront")
-- EBS Storage amount
-
-### RDS (MySQL / PostgreSQL / MariaDB / SQL Server)
-- Instance type (look up vCPU + memory from MCP)
-- Deployment option (Multi-AZ / Single-AZ)
-- Storage amount
-- Pricing strategy
-- Database edition (SQL Server only)
-- License (SQL Server only)
-
-### Aurora
-- Instance type (look up vCPU + memory from MCP)
-- Quantity (nodes)
-- Storage amount
-- Pricing strategy
-
-### ALB
-- Number of Application Load Balancers
-- Application Load Balancer fixed hourly charges (Monthly): use value from JSON if present
-- Application Load Balancer LCU usage charges (Monthly): use value from JSON if present
-
-### NLB
-- Number of Network Load Balancers
-- Processed bytes per NLB for TCP (if present in JSON)
-- Average number of new TCP connections (if present)
-- Average TCP connection duration (if present)
-
-### NAT Gateway
-- Include ALL properties from the JSON as-is, no filtering, no omissions
-
-### Transit Gateway
-- Number of Transit Gateway attachments
-- Ingress data processed per TGW attachment: use value from JSON if present, otherwise omit
-
-### VPN
-- Number of Site-to-Site VPN Connections
-
-### WAF
-- Number of Web Access Control Lists (Web ACLs) utilized
-- Number of Rules added per Web ACL (if present)
-- Number of Rule Groups per Web ACL (if present)
-- Number of Managed Rule Groups per Web ACL (if present)
-- Number of web requests received across all web ACLs (if present in JSON)
-
-### Fargate
-- Operating system
-- CPU Architecture
-- Average duration
-- Number of tasks or pods
-- Amount of memory allocated
-- Amount of ephemeral storage allocated for Amazon ECS
-
-### ElastiCache
-- Cache Engine (Redis / Valkey)
-- Instance type
-- Nodes
-- Pricing strategy
-
-### Backup (EBS / RDS / EFS / S3 / FSx)
-- Amount of primary data to be backed up
-- Estimated annual increase in primary data (as %)
-- Estimated daily change of primary data (as %)
-- Daily backups warm retention period
-- Weekly backups warm retention period (if present)
-- Monthly backups warm retention period (if present)
-
-### S3 Standard / Glacier
-- S3 Standard storage (or Glacier storage)
-- Description/label if present
-
-### EFS
-- Desired Storage Capacity
-
-### ECR
-- Amount of data stored
-
-### CloudWatch
-- Number of Metrics (includes detailed and custom metrics)
-- Standard Logs: Data Ingested
-- Standard Logs Delivered to CloudWatch Logs (if present)
-
-### GuardDuty
-- i) GuardDuty Foundational Threat Detection
-  - AWS CloudTrail Management Event Analysis
-  - EC2 VPC Flow Log Analysis (if present)
-- ii) GuardDuty Malware Protection for EC2 (if EBS scan present)
-  - EBS Volume Data Scan Analysis
-- iii) Malware Protection for S3 (if present)
-  - Total Size of S3 Objects scanned
-- iv) RDS Protection (if present)
-  - RDS provisioned instance vCPU
-
-### KMS
-- Number of customer managed Customer Master Keys (CMK)
-- Number of symmetric requests
-- Number of RSA GenerateDataKeyPair requests (if present)
-
-### CloudTrail
-- Write management trails
-- Read management trails (if present)
-- S3 trails (if present)
-- Lambda trails (if present)
-
-### Security Hub
-- Number of Accounts
-- Number of Security Checks per Account
-
-### Config
-- Number of Continuous Configuration items recorded
-- Number of Config rule evaluations
-
-### Inspector
-- Average No. of EC2 instances scanned per month
-- Average number of Lambda functions scanned in a month (if present)
-- Total number of newly pushed container images per month (if present)
-
-### Secrets Manager
-- Number of secrets
-- Average duration of each secret
-- Number of API calls
-
-### Lambda
-- Architecture
-- Number of requests
-- Amount of ephemeral storage allocated
-
-### Step Functions
-- Workflow requests
-- State transitions per workflow
-
-### Route 53
-- Hosted Zones
-- Additional Records in Hosted Zones (if present)
-- Standard queries (if present)
-
-### ACM
-- Number of API calls
-
-### PrivateLink
-- Number of VPC Interface endpoints per AWS region
-
-### SNS
-- Requests
-
-### SES
-- Email messages sent from EC2
-
-### FSx for Windows File Server
-- Deployment type
-- Desired storage capacity
-- Desired aggregate throughput
-
-### Directory Service
-- Total number of directories
-- Edition
-
-### CloudHSM
-- Number of HSMs (hsm1.medium)
-
-### DRS (Elastic Disaster Recovery)
-- Number of source servers replicated per month
-- Number of disks
-- Average change rate on disks per day
-- Storage on all disks and all servers
-
-### EKS
-- Number of EKS Clusters
-
-### Systems Manager - Parameter Store
-- Standard parameters
-- Advanced parameters
-- Frequency of API interactions per parameter
-
-### Data Transfer
-- Outbound Data Transfer to Internet (skip if 0)
+- Use the JSON field name as the label, and the JSON value as the value
+- Do not skip, filter, or omit any field
+- The only exception: skip fields where the value is clearly zero/empty and adds no information (e.g. `DT Inbound: Not selected: 0 TB per month`, `DT Outbound: Not selected: 0 TB per month`)
+- For **EC2 instances**, additionally look up vCPU and memory from the MCP (not in JSON) and include them after the instance type line
+- For **RDS/Aurora instances**, additionally look up vCPU and memory from the MCP and include them after the instance type line
+- Pricing strategy: shorten to readable form — `Compute Savings Plans 3yr No Upfront`, `On Demand`, `Reserved 1yr No Upfront`
+- Skip the `Tenancy: Shared Instances` field — it adds no useful info
 
 ---
 
