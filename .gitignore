@@ -1,7 +1,11 @@
-# Customer uploads — do not commit real customer data to git
+# ⚠️ NEVER commit customer files to this repo
+# JSON uploads — customer pricing data, must never be pushed
+upload json file here/*.json
+upload json file here/*.html
+
+# Also block old folder name just in case
 uploads/*.json
-!uploads/EXAMPLE*.json
-!uploads/.gitkeep
+uploads/*.html
 
 # OS
 .DS_Store
