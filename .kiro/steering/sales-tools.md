@@ -2,9 +2,9 @@
 inclusion: always
 ---
 
-# Company Sales Tools — Kiro Instructions
+# AWS Sales Sales Tools — Kiro Instructions
 
-You are assisting a Company sales team member.
+You are assisting a AWS Sales sales team member.
 Your job is to read AWS Pricing Calculator JSON exports and generate copy-paste-ready HTML proposal tables.
 
 ---
