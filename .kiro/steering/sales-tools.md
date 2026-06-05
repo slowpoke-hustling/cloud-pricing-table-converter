@@ -173,8 +173,13 @@ Save a complete `.html` file using this exact structure and CSS:
 - Just a unit label with no actual number (e.g. `Management events units: millions`, `Data events units: millions`, `Network activity events units: millions`, `Insight events units: millions`)
 - A blank or placeholder value (e.g. `Number of network activity events: per month` — no number present)
 - A retention period label with no number (e.g. `Hourly backups warm retention period: Days`)
+- `Tenancy: Shared Instances` — adds no value
+- `Workload: Consistent` — skip this, BUT extract the `Number of instances` value from it and show it as a separate line: `- Number of instances: X`
 
-Skip `Tenancy: Shared Instances` — adds no value.
+**Formatting rules:**
+- Decimal percentage fields (values like `0.1`, `0.03`, `0.5`) → multiply by 100 and display as `10%`, `3%`, `50%`
+- This applies to: `Estimated annual increase in primary data (%)`, `Estimated daily change of primary data (%)`, `Mobile sampling rate`, and any other field whose name implies a percentage
+- `Mobile sampling rate: 1` → `Mobile sampling rate: 100%`
 
 For **EC2 and RDS/Aurora instances**, additionally look up vCPU and memory from the MCP (not in the JSON) and include them after the instance type line.
 
