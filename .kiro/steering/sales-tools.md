@@ -168,15 +168,17 @@ Save a complete `.html` file using this exact structure and CSS:
 
 ## WHAT TO INCLUDE PER SERVICE
 
-**The rule is simple: copy ALL properties from the JSON exactly as they appear, for every service.**
+**Copy ALL properties from the JSON exactly as they appear.** Skip a field only if its value is:
+- Zero / empty / "Not selected" (e.g. `DT Inbound: Not selected: 0 TB per month`)
+- Just a unit label with no actual number (e.g. `Management events units: millions`, `Data events units: millions`, `Network activity events units: millions`, `Insight events units: millions`)
+- A blank or placeholder value (e.g. `Number of network activity events: per month` — no number present)
+- A retention period label with no number (e.g. `Hourly backups warm retention period: Days`)
 
-- Use the JSON field name as the label, and the JSON value as the value
-- Do not skip, filter, or omit any field
-- The only exception: skip fields where the value is clearly zero/empty and adds no information (e.g. `DT Inbound: Not selected: 0 TB per month`, `DT Outbound: Not selected: 0 TB per month`)
-- For **EC2 instances**, additionally look up vCPU and memory from the MCP (not in JSON) and include them after the instance type line
-- For **RDS/Aurora instances**, additionally look up vCPU and memory from the MCP and include them after the instance type line
-- Pricing strategy: shorten to readable form — `Compute Savings Plans 3yr No Upfront`, `On Demand`, `Reserved 1yr No Upfront`
-- Skip the `Tenancy: Shared Instances` field — it adds no useful info
+Skip `Tenancy: Shared Instances` — adds no value.
+
+For **EC2 and RDS/Aurora instances**, additionally look up vCPU and memory from the MCP (not in the JSON) and include them after the instance type line.
+
+Pricing strategy: shorten to readable form — `Compute Savings Plans 3yr No Upfront`, `On Demand`, `Reserved 1yr No Upfront`.
 
 ---
 
