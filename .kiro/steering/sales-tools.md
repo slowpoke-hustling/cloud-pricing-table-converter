@@ -172,7 +172,7 @@ Save a complete `.html` file using this exact structure and CSS:
 
 ## WHAT TO INCLUDE PER SERVICE
 
-**Include all non-zero, non-technical fields.** Skip: utilization %, monitoring disabled, DT inbound 0, tenancy shared, enable monitoring.
+**Include ALL properties from the JSON exactly as they appear.** Do not filter, skip, or omit any field — just copy them straight from the JSON into the table. The only exceptions are fields with obviously zero/empty values that add no information (e.g. `DT Inbound: 0 TB per month`, `DT Outbound: Not selected: 0 TB per month`).
 
 ### EC2
 - Region (Malaysia / Singapore)
@@ -209,8 +209,7 @@ Save a complete `.html` file using this exact structure and CSS:
 - Average TCP connection duration (if present)
 
 ### NAT Gateway
-- Number of NAT Gateways
-- Data Processed per NAT Gateway: use value from JSON if present, otherwise omit
+- Include ALL properties from the JSON as-is, no filtering, no omissions
 
 ### Transit Gateway
 - Number of Transit Gateway attachments
