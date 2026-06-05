@@ -117,70 +117,246 @@ Save a complete `.html` file using this exact structure and CSS:
 
 ## DATA ROW FORMAT
 
-Each row:
+**For a flat group (single level)** — one row per group, services listed inside:
 ```html
 <tr>
   <td class="no-cell">{n}.</td>
   <td class="desc-cell">
-    <b>- {service_label}</b><br>
-    &nbsp;&nbsp;&nbsp;{detail line 1}<br>
-    &nbsp;&nbsp;&nbsp;{detail line 2}
+<b>{Group Name}</b><br>
+<br>
+{Service Name} - {Description if any}<br>
+- {field}: {value}<br>
+- {field}: {value}<br>
+<br>
+{Next Service Name}<br>
+- {field}: {value}<br>
   </td>
-  <td class="cost-cell">USD {cost}</td>
+  <td class="cost-cell">USD {group_total_cost}</td>
 </tr>
 ```
+
+**For a nested group (parent with sub-groups)** — one row for the whole parent, sub-groups numbered inside:
+```html
+<tr>
+  <td class="no-cell">{n}.</td>
+  <td class="desc-cell">
+<b>{Parent Group Name}</b><br>
+<br>
+<b>1. {Sub-group Name}</b><br>
+<br>
+{Service Name}<br>
+- {field}: {value}<br>
+- {field}: {value}<br>
+<br>
+{Next Service Name}<br>
+- {field}: {value}<br>
+<br>
+<b>2. {Sub-group Name}</b><br>
+<br>
+{Service Name}<br>
+- {field}: {value}<br>
+  </td>
+  <td class="cost-cell">USD {group_total_cost}</td>
+</tr>
+```
+
+**Rules:**
+- Service name is plain text (not bold), followed by ` - Description` if the JSON has a Description field
+- Each detail line starts with `- ` (dash space)
+- A blank `<br>` line separates every service block
+- A blank `<br>` line after every numbered sub-group heading
+- No `&nbsp;` indentation anywhere
+- Sub-group headings are bold: `<b>1. Sub-group Name</b>`
 
 ---
 
 ## WHAT TO INCLUDE PER SERVICE
 
-**Only include fields that help the customer understand what they're getting.**
-Skip: utilization %, monitoring disabled, DT inbound 0, tenancy shared.
+**Include all non-zero, non-technical fields.** Skip: utilization %, monitoring disabled, DT inbound 0, tenancy shared, enable monitoring.
 
 ### EC2
-- Instance type (look up vCPU + memory from MCP if needed)
-- OS
-- Number of instances
-- Pricing strategy (shortened: "On Demand" / "Compute Savings Plans: 1 Year No upfront" / "Reserved 1yr No Upfront")
-- EBS storage amount
 - Region (Malaysia / Singapore)
+- Operating system
+- Number of instances
+- Advance EC2 instance (type)
+- vCPU + Memory (look up from MCP)
+- Pricing strategy (short form: "On Demand" / "Compute Savings Plans 1yr No Upfront" / "Compute Savings Plans 3yr No Upfront" / "Reserved 1yr No Upfront")
+- EBS Storage amount
 
-### RDS / Aurora
-- Engine + instance type (look up vCPU + memory from MCP)
+### RDS (MySQL / PostgreSQL / MariaDB / SQL Server)
+- Instance type (look up vCPU + memory from MCP)
 - Deployment option (Multi-AZ / Single-AZ)
 - Storage amount
-- Pricing model
+- Pricing strategy
 - Database edition (SQL Server only)
+- License (SQL Server only)
+
+### Aurora
+- Instance type (look up vCPU + memory from MCP)
+- Quantity (nodes)
+- Storage amount
+- Pricing strategy
 
 ### ALB
-- Number of ALBs
-- Fixed hourly charges (monthly): `count × ALB_rate × 730`
-- LCU charges (monthly): `total_cost - fixed`
-- Look up ALB rate from MCP if unsure
+- Number of Application Load Balancers
+- Application Load Balancer fixed hourly charges (Monthly): `count × ALB_rate × 730`
+- Application Load Balancer LCU usage charges (Monthly): `total_cost - fixed`
+
+### NLB
+- Number of Network Load Balancers
+- Processed bytes per NLB for TCP (if present in JSON)
+- Average number of new TCP connections (if present)
+- Average TCP connection duration (if present)
 
 ### NAT Gateway
 - Number of NAT Gateways
-- Data processed GB — reverse-engineer: `(cost - nat_count × rate × 730) / rate`
-- Look up rate from MCP: `AmazonEC2`, group `NGW:NatGateway`, Malaysia
+- Data Processed per NAT Gateway — reverse-engineer if missing: `(cost - nat_count × rate × 730) / rate`
 
 ### Transit Gateway
-- Number of attachments
-- Ingress data processed GB — reverse-engineer: `(cost - attach × rate × 730) / data_rate`
-- Look up TGW rates from MCP if unsure
+- Number of Transit Gateway attachments
+- Ingress data processed per TGW attachment — reverse-engineer if missing: `(cost - attach × rate × 730) / data_rate`
+
+### VPN
+- Number of Site-to-Site VPN Connections
 
 ### WAF
-- WebACLs, rules, managed rule groups
-- Web requests (M) — reverse-engineer from cost if missing
+- Number of Web Access Control Lists (Web ACLs) utilized
+- Number of Rules added per Web ACL (if present)
+- Number of Rule Groups per Web ACL (if present)
+- Number of Managed Rule Groups per Web ACL (if present)
+- Number of web requests received across all web ACLs — reverse-engineer if missing: `(cost - ACLs×5 - rules×1) / 0.60` million
 
-### Backup (EBS/RDS/S3/EFS/FSx)
-- Amount of primary data
-- Daily retention
-- Weekly/monthly retention if present
-- Annual increase %, daily change %
+### Fargate
+- Operating system
+- CPU Architecture
+- Average duration
+- Number of tasks or pods
+- Amount of memory allocated
+- Amount of ephemeral storage allocated for Amazon ECS
 
-### All others
-- Use all non-zero, non-technical Properties
-- Format cleanly, use your judgement
+### ElastiCache
+- Cache Engine (Redis / Valkey)
+- Instance type
+- Nodes
+- Pricing strategy
+
+### Backup (EBS / RDS / EFS / S3 / FSx)
+- Amount of primary data to be backed up
+- Estimated annual increase in primary data (as %)
+- Estimated daily change of primary data (as %)
+- Daily backups warm retention period
+- Weekly backups warm retention period (if present)
+- Monthly backups warm retention period (if present)
+
+### S3 Standard / Glacier
+- S3 Standard storage (or Glacier storage)
+- Description/label if present
+
+### EFS
+- Desired Storage Capacity
+
+### ECR
+- Amount of data stored
+
+### CloudWatch
+- Number of Metrics (includes detailed and custom metrics)
+- Standard Logs: Data Ingested
+- Standard Logs Delivered to CloudWatch Logs (if present)
+
+### GuardDuty
+- i) GuardDuty Foundational Threat Detection
+  - AWS CloudTrail Management Event Analysis
+  - EC2 VPC Flow Log Analysis (if present)
+- ii) GuardDuty Malware Protection for EC2 (if EBS scan present)
+  - EBS Volume Data Scan Analysis
+- iii) Malware Protection for S3 (if present)
+  - Total Size of S3 Objects scanned
+- iv) RDS Protection (if present)
+  - RDS provisioned instance vCPU
+
+### KMS
+- Number of customer managed Customer Master Keys (CMK)
+- Number of symmetric requests
+- Number of RSA GenerateDataKeyPair requests (if present)
+
+### CloudTrail
+- Write management trails
+- Read management trails (if present)
+- S3 trails (if present)
+- Lambda trails (if present)
+
+### Security Hub
+- Number of Accounts
+- Number of Security Checks per Account
+
+### Config
+- Number of Continuous Configuration items recorded
+- Number of Config rule evaluations
+
+### Inspector
+- Average No. of EC2 instances scanned per month
+- Average number of Lambda functions scanned in a month (if present)
+- Total number of newly pushed container images per month (if present)
+
+### Secrets Manager
+- Number of secrets
+- Average duration of each secret
+- Number of API calls
+
+### Lambda
+- Architecture
+- Number of requests
+- Amount of ephemeral storage allocated
+
+### Step Functions
+- Workflow requests
+- State transitions per workflow
+
+### Route 53
+- Hosted Zones
+- Additional Records in Hosted Zones (if present)
+- Standard queries (if present)
+
+### ACM
+- Number of API calls
+
+### PrivateLink
+- Number of VPC Interface endpoints per AWS region
+
+### SNS
+- Requests
+
+### SES
+- Email messages sent from EC2
+
+### FSx for Windows File Server
+- Deployment type
+- Desired storage capacity
+- Desired aggregate throughput
+
+### Directory Service
+- Total number of directories
+- Edition
+
+### CloudHSM
+- Number of HSMs (hsm1.medium)
+
+### DRS (Elastic Disaster Recovery)
+- Number of source servers replicated per month
+- Number of disks
+- Average change rate on disks per day
+- Storage on all disks and all servers
+
+### EKS
+- Number of EKS Clusters
+
+### Systems Manager - Parameter Store
+- Standard parameters
+- Advanced parameters
+- Frequency of API interactions per parameter
+
+### Data Transfer
+- Outbound Data Transfer to Internet (skip if 0)
 
 ---
 
