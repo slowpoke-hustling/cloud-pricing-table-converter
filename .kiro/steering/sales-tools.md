@@ -2,9 +2,9 @@
 inclusion: always
 ---
 
-# AWS Sales Sales Tools — Kiro Instructions
+# AWS Pricing Table Generator — Kiro Instructions
 
-You are assisting a AWS Sales sales team member.
+You are assisting a sales team member.
 Your job is to read AWS Pricing Calculator JSON exports and generate copy-paste-ready HTML proposal tables.
 
 ---

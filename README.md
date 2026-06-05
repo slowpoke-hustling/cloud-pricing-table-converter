@@ -9,7 +9,7 @@ Generate copy-paste-ready AWS proposal tables from AWS Pricing Calculator export
 You only need **Kiro** installed. Paste this prompt into a **new Kiro chat** and it will handle everything else:
 
 ```
-Please set up the AWS Sales pricing table generator tool on my machine. Do the following steps in order:
+Please set up the AWS Pricing Table Generator tool on my machine. Do the following steps in order:
 
 1. Check if git is installed by running `git --version`. If it's not installed, install it using Homebrew (`brew install git`) on Mac or by running `winget install Git.Git` on Windows.
 2. Check if uv/uvx is installed by running `uvx --version`. If it's not installed, install it by running `pip install uv`. If pip is also not available, install it via `curl -LsSf https://astral.sh/uv/install.sh | sh` on Mac or `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"` on Windows.
@@ -20,7 +20,7 @@ Please set up the AWS Sales pricing table generator tool on my machine. Do the f
 Tell me when everything is ready or flag any step that failed.
 ```
 
-> You need to be added as a collaborator before cloning. Contact your SA team lead if the clone fails with a permission error.
+> The repo is public — no invite needed. Anyone can clone and pull.
 
 ---
 
