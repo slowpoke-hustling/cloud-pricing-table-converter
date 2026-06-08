@@ -1,12 +1,24 @@
-# ⚠️ NEVER commit customer files to this repo
-# JSON uploads — customer pricing data, must never be pushed
+# ⚠️ NEVER commit customer files
 upload json file here/*.json
 upload json file here/*.html
-
-# Also block old folder name just in case
 uploads/*.json
 uploads/*.html
+
+# Lambda build artifacts
+/tmp/
+*.zip
+__pycache__/
+*.pyc
+.venv/
+venv/
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Kiro local settings
+.kiro/settings/
+
+# CDK/SAM outputs
+cdk.out/
+.aws-sam/
