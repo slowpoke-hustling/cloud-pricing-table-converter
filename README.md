@@ -10,7 +10,7 @@ Upload an AWS Pricing Calculator JSON export → get a copy-paste-ready HTML pro
 
 ## Live URL
 
-`https://d1k3i0xitygcxs.cloudfront.net`
+After running `./deploy.sh`, the CloudFront URL will be printed at the end.
 
 Share this with your team — no install required, works in any browser.
 

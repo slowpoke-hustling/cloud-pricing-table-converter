@@ -4,7 +4,7 @@
 # with Lambda requiring the zip to exist before stack creation.
 set -e
 
-PROFILE="kiro-deploy"
+PROFILE="${AWS_PROFILE:-default}"   # override: AWS_PROFILE=your-profile ./deploy.sh
 REGION="us-east-1"
 STACK_NAME="pricing-table-generator"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
