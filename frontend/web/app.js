@@ -47,6 +47,21 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-clear').addEventListener('click', clearFile);
     document.getElementById('btn-generate').addEventListener('click', generate);
     document.getElementById('btn-open-table').addEventListener('click', openTable);
+
+    // Currency selector — update label, xe.com link, and invalidate generated table
+    document.getElementById('currency-select').addEventListener('change', function() {
+        const cur = this.value;
+        document.getElementById('currency-label').textContent = cur;
+        document.getElementById('rate-link').href =
+            `https://www.xe.com/currencyconverter/convert/?Amount=1&From=USD&To=${cur}`;
+        document.getElementById('myr-rate').value = cur === 'SGD' ? '1.35' : '4.4';
+        invalidateGeneratedTable('Currency changed — please regenerate.');
+    });
+
+    // Exchange rate change — invalidate generated table
+    document.getElementById('myr-rate').addEventListener('change', function() {
+        invalidateGeneratedTable('Rate changed — please regenerate.');
+    });
 });
 
 // ── File handling ─────────────────────────────────────────────────────────────
@@ -85,6 +100,7 @@ function clearFile() {
     resetOpenButton();
     setStatus('');
     window._generatedHtml = null;
+    document.getElementById('open-prompt').style.display = 'none';
 }
 
 // ── Estimate Preview ──────────────────────────────────────────────────────────
@@ -146,11 +162,12 @@ function renderPreview(data, groupStatuses) {
 
         html += `<div class="pricing-group" id="group-row-${i}">
   <div class="pricing-group-header" onclick="this.parentElement.classList.toggle('open')">
-    <span>${esc(g.name)}</span>
+    <span style="display:flex;align-items:center;gap:6px;">
+      <span class="chevron">▶</span>${esc(g.name)}<span class="group-status-indicator">${statusEl}</span>
+    </span>
     <span style="display:flex;align-items:center;gap:8px;">
       <span style="font-size:12px;color:var(--text-muted);">${g.services.length} service${g.services.length!==1?'s':''}</span>
       <span style="font-weight:700;">USD ${g.total.toLocaleString('en-US',{minimumFractionDigits:2})}/mo</span>
-      ${statusEl}
     </span>
   </div>
   <div class="pricing-services">`;
@@ -159,9 +176,10 @@ function renderPreview(data, groupStatuses) {
             const monthly = parseFloat(svc['Service Cost']?.monthly || 0);
             const props = Object.entries(svc.Properties || {});
             const id = Math.random().toString(36).substr(2,6);
+            const label = svc.Description ? `${esc((svc['Service Name']||'').trim())} — <em>${esc(svc.Description)}</em>` : esc((svc['Service Name']||'').trim());
             const subLabel = svc._sub ? ` <span style="font-size:10px;color:var(--text-muted);">[${esc(svc._sub)}]</span>` : '';
             html += `<div class="pricing-service" onclick="var p=document.getElementById('p-${id}');p.style.display=p.style.display==='block'?'none':'block'">
-    <span>${esc((svc['Service Name']||'').trim())}${svc.Description?' — <em>'+esc(svc.Description)+'</em>':''}${subLabel}</span>
+    <span style="display:flex;align-items:center;gap:5px;"><span class="svc-chevron">▾</span>${label}${subLabel}</span>
     <span>${monthly.toFixed(2)}</span>
   </div>`;
             if (props.length) {
@@ -181,15 +199,8 @@ function renderPreview(data, groupStatuses) {
 function updateGroupStatus(index, status) {
     const row = document.getElementById(`group-row-${index}`);
     if (!row) return;
-    const header = row.querySelector('.pricing-group-header');
-    if (!header) return;
-    // Find or create the status span (last child of header's last span)
     let statusSpan = row.querySelector('.group-status-indicator');
-    if (!statusSpan) {
-        statusSpan = document.createElement('span');
-        statusSpan.className = 'group-status-indicator';
-        header.querySelector('span:last-child').appendChild(statusSpan);
-    }
+    if (!statusSpan) return;
     if (status === 'done') {
         statusSpan.innerHTML = '<span style="color:var(--success);font-size:12px;">✓</span>';
     } else if (status === 'processing') {
@@ -203,6 +214,7 @@ async function generate() {
     if (!parsedData) return;
 
     const myrRate = parseFloat(document.getElementById('myr-rate').value) || 4.4;
+    const currency = document.getElementById('currency-select').value;
     const btn = document.getElementById('btn-generate');
 
     btn.disabled = true;
@@ -217,7 +229,7 @@ async function generate() {
         const resp = await fetch(`${API_URL}/api/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ json: parsedData, myr_rate: myrRate }),
+            body: JSON.stringify({ json: parsedData, myr_rate: myrRate, currency: currency }),
         });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({}));
@@ -235,9 +247,11 @@ async function generate() {
         window._generatedHtml = result.html;
         setOpenButtonReady();
         setStatus(`✓ Done — ${result.customer_name}`, 'success');
+        document.getElementById('open-prompt').style.display = 'block';
 
     } catch(e) {
         setStatus(e.message, 'error');
+        document.getElementById('open-prompt').style.display = 'none';
     } finally {
         btn.disabled = false;
         btn.textContent = 'Generate Table';
@@ -302,6 +316,14 @@ function openTable() {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function invalidateGeneratedTable(reason) {
+    if (!window._generatedHtml) return; // nothing generated yet, nothing to do
+    window._generatedHtml = null;
+    resetOpenButton();
+    document.getElementById('open-prompt').style.display = 'none';
+    setStatus(reason);
+}
 
 function setStatus(msg, type = '') {
     const el = document.getElementById('status-area');

@@ -1,26 +1,15 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Pricing Table Generator — Lambda + API Gateway + S3 + CloudFront
+Description: Pricing Table Generator — Lambda + API Gateway + CloudFront (single S3 bucket)
 
 Parameters:
-  FrontendBucket:
+  BucketName:
     Type: String
-  LambdaBucket:
-    Type: String
-  JsonStorageBucket:
-    Type: String
+    Description: Single S3 bucket for frontend, lambda zip, uploads, and jobs
 
 Resources:
 
-  # ── JSON Storage Bucket ──────────────────────────────────────────────────
-  JsonStorage:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Ref JsonStorageBucket
-      VersioningConfiguration:
-        Status: Enabled
-      Tags:
-        - Key: project
-          Value: pricing-table-generator
+  # Note: S3 bucket is created by deploy.sh before CloudFormation runs.
+  # CloudFormation only manages the bucket policy (CloudFront OAC access).
 
   # ── Lambda IAM Role ──────────────────────────────────────────────────────
   LambdaRole:
@@ -36,22 +25,27 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: BedrockAndS3
+        - PolicyName: PricingTableGeneratorPolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action:
-                  - bedrock:InvokeModel
-                Resource: "*"
+                Action: bedrock:InvokeModel
+                Resource: '*'
+              - Effect: Allow
+                Action: pricing:GetProducts
+                Resource: '*'
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:pricing-table-generator'
               - Effect: Allow
                 Action:
                   - s3:PutObject
                   - s3:GetObject
                   - s3:ListBucket
                 Resource:
-                  - !Sub 'arn:aws:s3:::${JsonStorageBucket}'
-                  - !Sub 'arn:aws:s3:::${JsonStorageBucket}/*'
+                  - !Sub 'arn:aws:s3:::${BucketName}'
+                  - !Sub 'arn:aws:s3:::${BucketName}/*'
 
   # ── Lambda Function ──────────────────────────────────────────────────────
   GenerateFunction:
@@ -62,13 +56,14 @@ Resources:
       Handler: lambda_function.handler
       Role: !GetAtt LambdaRole.Arn
       Code:
-        S3Bucket: !Ref LambdaBucket
-        S3Key: pricing_table_generator.zip
-      Timeout: 120
+        S3Bucket: !Ref BucketName
+        S3Key: lambda/pricing_table_generator.zip
+      Timeout: 300
       MemorySize: 512
       Environment:
         Variables:
-          S3_BUCKET: !Ref JsonStorageBucket
+          S3_BUCKET: !Ref BucketName
+          WORKER_FUNCTION: pricing-table-generator
 
   GeneratePermission:
     Type: AWS::Lambda::Permission
@@ -82,7 +77,7 @@ Resources:
   Api:
     Type: AWS::ApiGateway::RestApi
     Properties:
-      Name: pricing-table-generator-api
+      Name: ptg-api
 
   ApiResource:
     Type: AWS::ApiGateway::Resource
@@ -97,6 +92,13 @@ Resources:
       RestApiId: !Ref Api
       ParentId: !Ref ApiResource
       PathPart: generate
+
+  StatusResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref Api
+      ParentId: !Ref ApiResource
+      PathPart: status
 
   GeneratePost:
     Type: AWS::ApiGateway::Method
@@ -134,25 +136,61 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
+  StatusGet:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref Api
+      ResourceId: !Ref StatusResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GenerateFunction.Arn}/invocations'
+
+  StatusOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref Api
+      ResourceId: !Ref StatusResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
-    DependsOn: [GeneratePost, GenerateOptions]
+    DependsOn: [GeneratePost, GenerateOptions, StatusGet, StatusOptions]
     Properties:
       RestApiId: !Ref Api
       StageName: prod
 
-  # ── CloudFront + Frontend S3 ─────────────────────────────────────────────
-  FrontendBucketPolicy:
+  # ── CloudFront (serves frontend/ prefix only) ─────────────────────────────
+  BucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
-      Bucket: !Ref FrontendBucket
+      Bucket: !Ref BucketName
       PolicyDocument:
         Statement:
           - Effect: Allow
             Principal:
               Service: cloudfront.amazonaws.com
             Action: s3:GetObject
-            Resource: !Sub 'arn:aws:s3:::${FrontendBucket}/*'
+            Resource: !Sub 'arn:aws:s3:::${BucketName}/frontend/*'
             Condition:
               StringEquals:
                 AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFront}'
@@ -161,7 +199,7 @@ Resources:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
       OriginAccessControlConfig:
-        Name: pricing-table-generator-oac
+        Name: ptg-oac
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
@@ -174,7 +212,8 @@ Resources:
         DefaultRootObject: index.html
         Origins:
           - Id: S3Origin
-            DomainName: !Sub '${FrontendBucket}.s3.amazonaws.com'
+            DomainName: !Sub '${BucketName}.s3.amazonaws.com'
+            OriginPath: /frontend
             OriginAccessControlId: !Ref OAC
             S3OriginConfig:
               OriginAccessIdentity: ''
@@ -193,5 +232,5 @@ Outputs:
     Value: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com/prod'
   CloudFrontUrl:
     Value: !Sub 'https://${CloudFront.DomainName}'
-  JsonBucket:
-    Value: !Ref JsonStorageBucket
+  Bucket:
+    Value: !Ref BucketName

@@ -43,12 +43,18 @@
                             </div>
                         </div>
 
-                        <div class="section-label" style="margin-top:16px">2. MYR Exchange Rate</div>
+                        <div class="section-label" style="margin-top:16px">2. Local Currency</div>
                         <div class="rate-row">
+                            <select id="currency-select" style="padding:5px 8px;border:1px solid var(--border);border-radius:5px;font-size:12px;background:var(--bg);color:var(--text);outline:none;">
+                                <option value="MYR">MYR (Malaysian Ringgit)</option>
+                                <option value="SGD">SGD (Singapore Dollar)</option>
+                            </select>
+                        </div>
+                        <div class="rate-row" style="margin-top:8px">
                             <span class="rate-label">USD 1 =</span>
                             <input type="number" id="myr-rate" value="4.4" step="0.01" min="1" max="10">
-                            <span class="rate-label">MYR</span>
-                            <a href="https://www.xe.com/currencyconverter/convert/?Amount=1&From=USD&To=MYR" target="_blank" class="rate-link">check live rate</a>
+                            <span class="rate-label" id="currency-label">MYR</span>
+                            <a href="https://www.xe.com/currencyconverter/convert/?Amount=1&From=USD&To=MYR" target="_blank" class="rate-link" id="rate-link">check live rate</a>
                         </div>
 
                         <button class="btn-generate" id="btn-generate" disabled>
@@ -56,10 +62,13 @@
                         </button>
 
                         <div class="status-area" id="status-area"></div>
+                        <div class="open-prompt" id="open-prompt" style="display:none">
+                            👇 Press the button below to get your proposal table.
+                        </div>
 
                         <div style="margin-top: auto; padding-top: 16px;">
                             <button class="btn-open-table" id="btn-open-table" disabled>
-                                Open Table in New Tab
+                                Click Here to Get Your Table
                             </button>
                             <div class="open-hint" id="open-hint" style="display:none">
                                 Cmd+A → Cmd+C → paste into Google Doc

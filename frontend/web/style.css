@@ -96,7 +96,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .status-area.error { color: var(--error); }
 .status-area.success { color: var(--success); }
 
-/* Open table button */
+/* Open table prompt */
+.open-prompt {
+    font-size: 12px; font-weight: 600; color: var(--accent);
+    text-align: center; padding: 8px 10px;
+    background: rgba(79,70,229,0.08); border-radius: 6px;
+    border: 1px solid rgba(79,70,229,0.2);
+}
 .btn-open-table {
     width: 100%; background: var(--border); color: var(--text-muted);
     border: none; border-radius: 6px; padding: 10px; font-size: 13px;
@@ -125,6 +131,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     transition: background 0.15s;
 }
 .pricing-group-header:hover { background: var(--bg); }
+.chevron { font-size: 9px; color: var(--text-muted); transition: transform 0.2s; display: inline-block; }
+.pricing-group.open .chevron { transform: rotate(90deg); }
 .pricing-services { display: none; padding: 0 12px 8px 24px; }
 .pricing-group.open .pricing-services { display: block; }
 .pricing-service {
@@ -134,11 +142,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 }
 .pricing-service:hover { color: var(--accent); }
 .pricing-service em { color: var(--text-muted); font-style: italic; }
+.svc-chevron { font-size: 9px; color: #ccc; flex-shrink: 0; }
 .pricing-props {
     display: none; font-size: 11px; color: var(--text-muted);
-    padding: 4px 0 6px 12px; line-height: 1.6;
+    padding: 4px 0 6px 18px; line-height: 1.6;
 }
 .pricing-props div { padding: 1px 0; }
+
+/* Status indicator spacing — keep it away from the cost text */
+.group-status-indicator { display: inline-flex; align-items: center; min-width: 18px; margin-left: 4px; }
 
 /* Spinner for group processing */
 @keyframes spin { to { transform: rotate(360deg); } }

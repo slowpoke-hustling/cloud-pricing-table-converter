@@ -1,5 +1,22 @@
 # Changelog — Pricing Table Generator
 
+## v2.0 — 2026-06-08
+**AWS-deployed web app (aws-deployed branch)**
+- New branch `aws-deployed` — fully hosted on AWS (CloudFront + Lambda + API Gateway + S3)
+- Single S3 bucket (`pricing-table-gen-{account_id}`) with prefixes: `frontend/`, `lambda/`, `uploads/`, `jobs/`
+- Frontend: SA Agent–style UI with estimate preview (collapsible groups + services), SA Agent–style pricing tab
+- Claude Sonnet 4.6 via Bedrock generates the proposal table
+- Per-group chunking (max 10 services/call) to avoid API Gateway 29s timeout
+- Async job processing: `/api/generate` returns `job_id`, `/api/status` polls for result
+- EC2/RDS vCPU + Memory looked up via AWS Pricing API (`pricing:GetProducts`) inside Lambda
+- MYR/SGD currency selector with live rate link; SGD uses 9% GST, MYR uses 8% SST
+- Upload JSON → instant estimate preview (groups, services, totals) before generating
+- "Open Table in New Tab" button activates after generation; visible prompt guides user
+- Collapsible group/service chevrons in preview for discoverability
+- S3 upload deduplication by MD5 content hash — same content never stored twice
+- JSON history stored at `uploads/{customer}/{timestamp}-{hash}.json`
+- `deploy.sh` one-command deploy; CloudFormation manages all AWS resources
+
 ## v1.4 — 2026-06-05
 **Skip empty/meaningless fields + percentage formatting**
 - Skip `Workload: Consistent` — extract `Number of instances` as a separate line instead

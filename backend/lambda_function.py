@@ -181,9 +181,9 @@ HTML_WRAPPER = """<!DOCTYPE html>
 {rows}
   <tr class="divider"><td colspan="3"></td></tr>
   <tr><td colspan="2" class="sum-label">Total Monthly Cost</td><td class="sum-value">USD {total_monthly}</td></tr>
-  <tr><td colspan="2" class="sum-label">Conversion to MYR ( USD 1 - RM {myr_rate} )</td><td class="sum-value">RM {total_myr}</td></tr>
-  <tr><td colspan="2" class="sum-label">Tax (8%)</td><td class="sum-value">RM {tax}</td></tr>
-  <tr class="sum-bold"><td colspan="2" class="sum-label">Total Monthly Payment</td><td class="sum-value">RM {total_with_tax}</td></tr>
+  <tr><td colspan="2" class="sum-label">Conversion to __CURRENCY__ ( USD 1 - __CURRENCY__ __RATE__ )</td><td class="sum-value">__CURRENCY__ __LOCAL__</td></tr>
+  <tr><td colspan="2" class="sum-label">Tax (__TAX_PCT__)</td><td class="sum-value">__CURRENCY__ __TAX__</td></tr>
+  <tr class="sum-bold"><td colspan="2" class="sum-label">Total Monthly Payment</td><td class="sum-value">__CURRENCY__ __TOTAL__</td></tr>
 </table>
 <br>
 <a href="{calc_url}" target="_blank">Calculator Link: {calc_url}</a>
@@ -216,6 +216,7 @@ def handle_generate(event):
         body = json.loads(event.get("body", "{}"))
         json_input = body.get("json", "")
         myr_rate = float(body.get("myr_rate", 4.4))
+        currency = body.get("currency", "MYR")
 
         data = json_input if isinstance(json_input, dict) else json.loads(json_input)
         if "Groups" not in data or "Total Cost" not in data:
@@ -285,6 +286,7 @@ def handle_generate(event):
                 "chunks": chunks,
                 "total_chunks": len(chunks),
                 "myr_rate": myr_rate,
+                "currency": currency,
                 "total_monthly": f"{total_monthly:,.2f}",
                 "total_myr": f"{total_myr:,.2f}",
                 "tax": f"{tax:,.2f}",
@@ -298,7 +300,7 @@ def handle_generate(event):
         s3.put_object(
             Bucket=S3_BUCKET,
             Key=f"jobs/{job_id}/input.json",
-            Body=json.dumps({"data": data, "myr_rate": myr_rate}).encode(),
+            Body=json.dumps({"data": data, "myr_rate": myr_rate, "currency": currency}).encode(),
             ContentType="application/json",
         )
 
@@ -346,6 +348,8 @@ def handle_status(event):
         chunks = meta.get("chunks", [])
         groups = meta.get("groups", [])
         total_chunks = meta.get("total_chunks", len(chunks))
+        currency = meta.get("currency", "MYR")
+        tax_pct = "9% GST" if currency == "SGD" else "8% SST"
 
         # Check which chunks are done
         done_chunks = {}  # chunk_index -> partial_html
@@ -447,6 +451,13 @@ def handle_status(event):
             total_with_tax=meta["total_with_tax"],
             calc_url=meta["calc_url"],
         )
+        # Replace currency placeholders
+        html = html.replace("__CURRENCY__", currency)
+        html = html.replace("__RATE__", str(meta["myr_rate"]))
+        html = html.replace("__LOCAL__", meta["total_myr"])
+        html = html.replace("__TAX_PCT__", tax_pct)
+        html = html.replace("__TAX__", meta["tax"])
+        html = html.replace("__TOTAL__", meta["total_with_tax"])
 
         return cors_response(200, json.dumps({
             "status": "done",
