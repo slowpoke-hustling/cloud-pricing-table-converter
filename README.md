@@ -39,10 +39,15 @@ Browser → API Gateway → Lambda → Claude Sonnet 4.6 (Bedrock)
 Requires AWS CLI with a named profile and Claude Sonnet 4.6 enabled in `us-east-1`.
 
 ```bash
-./deploy.sh
+# Set your AWS profile (default: "default")
+AWS_PROFILE=your-profile ./deploy.sh
 ```
 
-The script creates all AWS resources and prints the CloudFront URL when done.
+**First time setup — set git identity so your real name isn't exposed:**
+```bash
+git config user.name "YourGitHubUsername"
+git config user.email "yourusername@users.noreply.github.com"
+```
 
 ---
 

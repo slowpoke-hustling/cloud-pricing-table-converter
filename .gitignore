@@ -1,22 +1,18 @@
-# ⚠️ NEVER commit customer files
-upload json file here/*.json
-upload json file here/*.html
-uploads/*.json
-uploads/*.html
+# Private planning docs (not pushed)
+ROADMAP.md
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Lambda build artifacts
-/tmp/
 *.zip
 __pycache__/
 *.pyc
 .venv/
 venv/
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Kiro local settings
+# Kiro local settings (contains personal MCP config)
 .kiro/settings/
 
 # CDK/SAM outputs

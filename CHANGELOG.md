@@ -1,5 +1,45 @@
 # Changelog — Pricing Table Generator
 
+## v3.0 — 2026-07-01
+**GCP + Azure tab support, major parser overhaul, UI polish**
+
+### GCP Tab
+- Replaced regex/tokenizer parser with Claude Sonnet 4.6 — no more `FIELD_LABELS` hardcoding
+- Async parse flow: `/api/parse-gcp` returns structured JSON in ~5s
+- Total cross-checked against `Total estimated cost` line from raw paste
+- Customer name field (step 1) shared across all tabs with localStorage history (up to 20 names)
+- Parse button disabled until both customer name and paste area are filled
+- Invalidates on paste/name change to prevent stale generate
+
+### Azure Tab (new)
+- Upload `.xlsx` export from Azure Calculator — Claude extracts and formats descriptions as bullet points
+- Async parse: file saved to S3, background Lambda calls Claude, frontend polls `/api/status`
+- Service type shown in brackets `(Virtual Machines)` in preview and generated table
+- S3 path: `uploads/azure/{customer}/{timestamp}.xlsx`
+- `openpyxl` bundled in Lambda zip for xlsx reading
+
+### AWS Tab
+- Customer name field added (step 1) — used for S3 path and table header
+- Parse button flow: upload file + enter name → press Parse → preview renders
+- Customer name passed to backend for S3 path `uploads/aws/{customer}/`
+
+### UI/UX
+- Spinning circle replaced with pulsing dots animation (compositor-friendly, doesn't freeze)
+- Group processing dots in preview panel
+- Customer name datalist — all three tabs share localStorage history
+- Tab bottom borders: AWS orange, GCP black, Azure blue — all consistent
+- GCP group header border, parse button, generate button all match black theme
+- Prompt boxes: AWS orange, GCP black, Azure blue; "Click Here" button stays purple
+- Deploy script: auto cache-bust `app.js` and `style.css` per deploy; `style.css` uploaded with `no-cache`
+
+## v2.1 — 2026-06-22
+**Repo cleanup + Kiro automation**
+- Removed local workflow files: `upload json file here/`, hooks (`json-uploaded.json`, `setup.json`), steering (`sales-tools.md`)
+- Cleaned up `.gitignore` — removed stale upload folder patterns
+- Added `.kiro/hooks/changelog-reminder.json` — auto-reminds to update CHANGELOG after each session
+- Added `.kiro/steering/changelog.md` — documents versioning rules and format
+- Updated `README.md` — added git identity setup instructions and AWS_PROFILE usage note
+
 ## v2.0 — 2026-06-08
 **AWS-deployed web app (aws-deployed branch)**
 - New branch `aws-deployed` — fully hosted on AWS (CloudFront + Lambda + API Gateway + S3)

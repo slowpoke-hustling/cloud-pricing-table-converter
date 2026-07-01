@@ -22,19 +22,42 @@ aws s3api create-bucket --bucket $BUCKET --region $REGION \
 # 2. Package and upload Lambda zip (must exist before CloudFormation)
 echo "[2/5] Packaging and uploading Lambda..."
 rm -f /tmp/pricing_table_generator.zip
-zip -j /tmp/pricing_table_generator.zip "$SCRIPT_DIR/backend/lambda_function.py"
+# Install openpyxl into a temp dir for packaging
+LAMBDA_PKG_DIR=$(mktemp -d)
+pip3 install openpyxl --quiet --target "$LAMBDA_PKG_DIR" 2>/dev/null || python3 -m pip install openpyxl --quiet --target "$LAMBDA_PKG_DIR"
+cp "$SCRIPT_DIR/backend/lambda_function.py" "$LAMBDA_PKG_DIR/"
+cd "$LAMBDA_PKG_DIR" && zip -r /tmp/pricing_table_generator.zip . -q && cd "$SCRIPT_DIR"
+rm -rf "$LAMBDA_PKG_DIR"
 aws s3 cp /tmp/pricing_table_generator.zip "s3://$BUCKET/lambda/pricing_table_generator.zip" \
     --profile $PROFILE --region $REGION
 
-# 3. Deploy CloudFormation (Lambda zip now exists in bucket)
+# 3. Deploy CloudFormation only if template changed
 echo "[3/5] Deploying CloudFormation stack..."
-aws cloudformation deploy \
-    --template-file "$SCRIPT_DIR/template.yaml" \
-    --stack-name $STACK_NAME \
-    --capabilities CAPABILITY_IAM \
-    --parameter-overrides BucketName=$BUCKET \
+TEMPLATE_HASH=$(md5 -q "$SCRIPT_DIR/template.yaml" 2>/dev/null || md5sum "$SCRIPT_DIR/template.yaml" | cut -d' ' -f1)
+HASH_FILE="/tmp/ptg-template-hash-${ACCOUNT_ID}"
+PREV_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "")
+
+if [ "$TEMPLATE_HASH" != "$PREV_HASH" ]; then
+    aws cloudformation deploy \
+        --template-file "$SCRIPT_DIR/template.yaml" \
+        --stack-name $STACK_NAME \
+        --capabilities CAPABILITY_IAM \
+        --parameter-overrides BucketName=$BUCKET \
+        --profile $PROFILE \
+        --region $REGION
+    echo "$TEMPLATE_HASH" > "$HASH_FILE"
+else
+    echo "  Template unchanged — skipping CloudFormation deploy"
+fi
+
+# Always force Lambda to use the latest zip (CloudFormation won't detect zip content changes)
+echo "  Updating Lambda function code..."
+aws lambda update-function-code \
+    --function-name pricing-table-generator \
+    --s3-bucket $BUCKET \
+    --s3-key lambda/pricing_table_generator.zip \
     --profile $PROFILE \
-    --region $REGION
+    --region $REGION > /dev/null
 
 # 4. Get outputs
 echo "[4/5] Getting stack outputs..."
@@ -50,13 +73,22 @@ CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
 
 # 5. Deploy frontend with API URL injected
 echo "[5/5] Deploying frontend..."
+DEPLOY_TS=$(date +%s)
 sed "s|const API_URL = ''|const API_URL = '${API_URL}'|" \
     "$SCRIPT_DIR/frontend/web/app.js" > /tmp/app.js.deploy
+# Inject deploy timestamp into index.html for cache busting
+sed "s|__DEPLOY_TS__|${DEPLOY_TS}|g" \
+    "$SCRIPT_DIR/frontend/web/index.html" > /tmp/index.html.deploy
 aws s3 sync "$SCRIPT_DIR/frontend/web/" "s3://$BUCKET/frontend/" \
-    --profile $PROFILE --region $REGION --delete --exclude "app.js"
+    --profile $PROFILE --region $REGION --delete --exclude "app.js" --exclude "index.html" --exclude "style.css"
+aws s3 cp "$SCRIPT_DIR/frontend/web/style.css" "s3://$BUCKET/frontend/style.css" \
+    --profile $PROFILE --region $REGION --content-type "text/css" \
+    --cache-control "no-cache, no-store, must-revalidate"
+aws s3 cp /tmp/index.html.deploy "s3://$BUCKET/frontend/index.html" \
+    --profile $PROFILE --region $REGION --content-type "text/html"
 aws s3 cp /tmp/app.js.deploy "s3://$BUCKET/frontend/app.js" \
     --profile $PROFILE --region $REGION
-rm /tmp/app.js.deploy
+rm /tmp/app.js.deploy /tmp/index.html.deploy
 
 # Invalidate CloudFront cache on re-deploys
 DIST_ID=$(aws cloudfront list-distributions --profile $PROFILE \

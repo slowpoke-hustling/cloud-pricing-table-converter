@@ -1,9 +1,7 @@
 // Pricing Table Generator — Frontend
 const API_URL = ''; // Injected during deploy
 
-let uploadedFile = null;
-let parsedData = null;
-let groupList = [];
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
 function esc(str) {
     const d = document.createElement('div');
@@ -11,8 +9,29 @@ function esc(str) {
     return d.innerHTML;
 }
 
+// Customer name history — stored in localStorage, shown via datalist
+const CUSTOMER_HISTORY_KEY = 'ptg_customer_names';
+function loadCustomerHistory() {
+    try { return JSON.parse(localStorage.getItem(CUSTOMER_HISTORY_KEY) || '[]'); } catch { return []; }
+}
+function saveCustomerName(name) {
+    if (!name) return;
+    const history = loadCustomerHistory().filter(n => n !== name);
+    history.unshift(name);
+    localStorage.setItem(CUSTOMER_HISTORY_KEY, JSON.stringify(history.slice(0, 20)));
+    refreshCustomerDatalist();
+}
+function refreshCustomerDatalist() {
+    const dl = document.getElementById('customer-name-list');
+    if (!dl) return;
+    const history = loadCustomerHistory();
+    dl.innerHTML = history.map(n => `<option value="${esc(n)}">`).join('');
+}
+
+// ── Cloud tab switching ───────────────────────────────────────────────────────
+
 document.addEventListener('DOMContentLoaded', () => {
-    // Tab switching
+    // Feature tabs
     document.querySelectorAll('.tab').forEach(tab => {
         tab.addEventListener('click', () => {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -22,149 +41,373 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    const uploadArea = document.getElementById('upload-area');
-    const fileInput = document.getElementById('file-input');
-
-    document.getElementById('upload-browse').addEventListener('click', (e) => {
-        e.stopPropagation();
-        fileInput.click();
-    });
-    uploadArea.addEventListener('click', (e) => {
-        if (e.target.id === 'btn-clear' || e.target.id === 'upload-browse') return;
-        if (!uploadedFile) fileInput.click();
-    });
-    uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
-    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
-    uploadArea.addEventListener('drop', (e) => {
-        e.preventDefault();
-        uploadArea.classList.remove('dragover');
-        const f = e.dataTransfer.files[0];
-        if (f && f.name.endsWith('.json')) handleFile(f);
-        else setStatus('Please drop a .json file', 'error');
-    });
-    fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
-
-    document.getElementById('btn-clear').addEventListener('click', clearFile);
-    document.getElementById('btn-generate').addEventListener('click', generate);
-    document.getElementById('btn-open-table').addEventListener('click', openTable);
-
-    // Currency selector — update label, xe.com link, and invalidate generated table
-    document.getElementById('currency-select').addEventListener('change', function() {
-        const cur = this.value;
-        document.getElementById('currency-label').textContent = cur;
-        document.getElementById('rate-link').href =
-            `https://www.xe.com/currencyconverter/convert/?Amount=1&From=USD&To=${cur}`;
-        document.getElementById('myr-rate').value = cur === 'SGD' ? '1.35' : '4.4';
-        invalidateGeneratedTable('Currency changed — please regenerate.');
+    // Cloud provider tabs
+    document.querySelectorAll('.cloud-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.cloud-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.cloud-panel').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            document.getElementById(`cloud-panel-${tab.dataset.cloud}`).classList.add('active');
+        });
     });
 
-    // Exchange rate change — invalidate generated table
-    document.getElementById('myr-rate').addEventListener('change', function() {
-        invalidateGeneratedTable('Rate changed — please regenerate.');
-    });
+    initAWS();
+    initGCP();
+    initAzure();
+    refreshCustomerDatalist();
 });
 
-// ── File handling ─────────────────────────────────────────────────────────────
 
-async function handleFile(file) {
-    uploadedFile = file;
-    document.getElementById('upload-prompt').style.display = 'none';
-    document.getElementById('upload-ready').style.display = 'flex';
-    document.getElementById('file-name').textContent = file.name;
-    setStatus('');
+// ══════════════════════════════════════════════════════════════════════════════
+// AWS TAB
+// ══════════════════════════════════════════════════════════════════════════════
 
+let awsFile = null;
+let awsData = null;
+
+function initAWS() {
+    const uploadArea = document.getElementById('aws-upload-area');
+    const fileInput  = document.getElementById('aws-file-input');
+
+    // Upload area always active — Parse button enabled when both name AND file present
+    uploadArea.style.opacity = '1';
+    uploadArea.style.pointerEvents = 'auto';
+
+    const awsUpdateParseBtn = () => {
+        const hasName = document.getElementById('aws-customer-name').value.trim().length > 0;
+        document.getElementById('aws-btn-parse').disabled = !(hasName && awsFile);
+    };
+    document.getElementById('aws-customer-name').addEventListener('input', awsUpdateParseBtn);
+
+    document.getElementById('aws-upload-browse').addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
+    uploadArea.addEventListener('click', e => { if (e.target.id === 'aws-btn-clear' || e.target.id === 'aws-upload-browse') return; if (!awsFile) fileInput.click(); });
+    uploadArea.addEventListener('dragover',  e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+    uploadArea.addEventListener('drop', e => {
+        e.preventDefault(); uploadArea.classList.remove('dragover');
+        const f = e.dataTransfer.files[0];
+        if (f && f.name.endsWith('.json')) awsStageFile(f, awsUpdateParseBtn);
+        else awsSetStatus('Please drop a .json file', 'error');
+    });
+    fileInput.addEventListener('change', () => { if (fileInput.files[0]) awsStageFile(fileInput.files[0], awsUpdateParseBtn); });
+    document.getElementById('aws-btn-clear').addEventListener('click', () => { awsClearFile(); awsUpdateParseBtn(); });
+    document.getElementById('aws-btn-parse').addEventListener('click', awsParse);
+    document.getElementById('aws-btn-generate').addEventListener('click', awsGenerate);
+    document.getElementById('aws-btn-open-table').addEventListener('click', awsOpenTable);
+
+    document.getElementById('aws-currency-select').addEventListener('change', function() {
+        const cur = this.value;
+        document.getElementById('aws-currency-label').textContent = cur;
+        document.getElementById('aws-rate-link').href = `https://www.maybank2u.com.my/maybank2u/malaysia/en/personal/rates/forex_rates.page`;
+        document.getElementById('aws-myr-rate').value = cur === 'SGD' ? '1.35' : '4.4';
+        awsInvalidate('Currency changed — please regenerate.');
+    });
+    document.getElementById('aws-myr-rate').addEventListener('change', () => awsInvalidate('Rate changed — please regenerate.'));
+}
+
+function awsStageFile(file, callback) {
+    awsFile = file;
+    document.getElementById('aws-upload-prompt').style.display = 'none';
+    document.getElementById('aws-upload-ready').style.display = 'flex';
+    document.getElementById('aws-file-name').textContent = file.name;
+    awsSetStatus('');
+    if (callback) callback();
+}
+
+async function awsParse() {
+    if (!awsFile) return;
+    const btn = document.getElementById('aws-btn-parse');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"><i></i><i></i><i></i></span>Parsing...';
+    awsSetStatus('');
     try {
-        const text = await file.text();
-        parsedData = JSON.parse(text);
-        if (!parsedData.Groups || !parsedData['Total Cost']) {
-            throw new Error('Not a valid AWS Pricing Calculator export');
-        }
-        renderPreview(parsedData);
-        document.getElementById('btn-generate').disabled = false;
+        const text = await awsFile.text();
+        awsData = JSON.parse(text);
+        if (!awsData.Groups || !awsData['Total Cost']) throw new Error('Not a valid AWS Pricing Calculator export');
+        awsRenderPreview(awsData);
+        document.getElementById('aws-btn-generate').disabled = false;
+        const awsParsedName = document.getElementById('aws-customer-name').value.trim();
+        if (awsParsedName) saveCustomerName(awsParsedName);
+        awsSetStatus(`✓ Parsed ${Object.keys(awsData.Groups || {}).length} groups`, 'success');
     } catch(e) {
-        setStatus(e.message, 'error');
-        document.getElementById('btn-generate').disabled = true;
+        awsSetStatus(e.message, 'error');
+        document.getElementById('aws-btn-generate').disabled = true;
+    } finally {
+        btn.disabled = false; btn.textContent = 'Parse Estimate';
     }
 }
 
-function clearFile() {
-    uploadedFile = null;
-    parsedData = null;
-    groupList = [];
-    document.getElementById('file-input').value = '';
-    document.getElementById('upload-prompt').style.display = 'block';
-    document.getElementById('upload-ready').style.display = 'none';
-    document.getElementById('btn-generate').disabled = true;
-    document.getElementById('preview-panel').innerHTML =
-        '<div class="preview-placeholder"><p>Upload a JSON export to see the estimate summary.</p></div>';
-    resetOpenButton();
-    setStatus('');
-    window._generatedHtml = null;
-    document.getElementById('open-prompt').style.display = 'none';
+function awsClearFile() {
+    awsFile = null; awsData = null;
+    document.getElementById('aws-file-input').value = '';
+    document.getElementById('aws-upload-prompt').style.display = 'block';
+    document.getElementById('aws-upload-ready').style.display = 'none';
+    document.getElementById('aws-btn-parse').disabled = true;
+    document.getElementById('aws-btn-generate').disabled = true;
+    document.getElementById('aws-preview-panel').innerHTML = '<div class="preview-placeholder"><p>Enter customer name and upload a JSON export, then click Parse Estimate.</p></div>';
+    awsResetOpenButton(); awsSetStatus('');
+    window._awsHtml = null;
+    document.getElementById('aws-open-prompt').style.display = 'none';
 }
 
-// ── Estimate Preview ──────────────────────────────────────────────────────────
 
-function renderPreview(data, groupStatuses) {
+function awsRenderPreview(data, groupStatuses) {
     const customer = data.Name || 'Unknown';
     const totalMonthly = parseFloat(data['Total Cost']?.monthly || 0);
     const calcUrl = data.Metadata?.['Share Url'] || '';
-    const myrRate = parseFloat(document.getElementById('myr-rate').value) || 4.4;
 
-    // Build group list
     const groups = Object.entries(data.Groups || {})
         .filter(([n]) => !n.includes('To put in RFP'))
         .map(([gname, gdata], i) => {
             const clean = gname.replace(/^Original Grouping\s*>\s*/, '').trim();
             let total = 0, services = [];
-
-            // Normalize — some exports have group value as a list
-            if (Array.isArray(gdata)) {
-                gdata = { Services: gdata };
-            }
-
+            if (Array.isArray(gdata)) gdata = { Services: gdata };
             if (gdata.Services) {
                 gdata.Services.forEach(s => { total += parseFloat(s['Service Cost'].monthly); services.push(s); });
             } else {
                 Object.entries(gdata).forEach(([subName, sd]) => {
-                    if (Array.isArray(sd)) {
-                        sd.forEach(s => { total += parseFloat(s['Service Cost']?.monthly || 0); services.push({...s, _sub: subName}); });
-                    } else if (sd && sd.Services) {
-                        (sd.Services || []).forEach(s => { total += parseFloat(s['Service Cost'].monthly); services.push({...s, _sub: subName}); });
-                    }
+                    if (Array.isArray(sd)) sd.forEach(s => { total += parseFloat(s['Service Cost']?.monthly || 0); services.push({...s, _sub: subName}); });
+                    else if (sd?.Services) sd.Services.forEach(s => { total += parseFloat(s['Service Cost'].monthly); services.push({...s, _sub: subName}); });
                 });
             }
             return { name: clean, rawName: gname, total, services, index: i };
         });
+    awsGroupList = groups;
 
-    groupList = groups;
-
-    // Summary header
     let html = `<div style="margin-bottom:16px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;">
   <div style="font-size:14px;font-weight:700;">${esc(customer)}</div>
   <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
     Total: <strong style="color:var(--text);">USD ${totalMonthly.toLocaleString('en-US',{minimumFractionDigits:2})}/mo</strong>
-    &nbsp;·&nbsp; ${(totalMonthly*12).toLocaleString('en-US',{minimumFractionDigits:2})}/yr
-    &nbsp;·&nbsp; ${data.Metadata?.Currency || 'USD'}
+    &nbsp;·&nbsp; ${(totalMonthly*12).toLocaleString('en-US',{minimumFractionDigits:2})}/yr &nbsp;·&nbsp; ${data.Metadata?.Currency||'USD'}
   </div>
-  ${calcUrl ? `<a href="${calcUrl}" target="_blank" style="font-size:11px;color:var(--accent);margin-top:6px;display:inline-block;">Open in AWS Calculator ↗</a>` : ''}
+  ${calcUrl ? `<a href="${calcUrl}" target="_blank" style="font-size:11px;color:var(--aws);margin-top:6px;display:inline-block;">Open in AWS Calculator ↗</a>` : ''}
 </div>`;
 
-    // Groups — collapsible, like SA Agent pricing tab
     groups.forEach((g, i) => {
-        const statusEl = (() => {
-            if (!groupStatuses) return '';
-            const st = groupStatuses[i];
-            if (st === 'done') return '<span style="color:var(--success);font-size:12px;">✓</span>';
-            if (st === 'processing') return '<span class="group-spinner"></span>';
-            return '<span style="width:8px;height:8px;border-radius:50%;background:var(--border);display:inline-block;"></span>';
-        })();
-
-        html += `<div class="pricing-group" id="group-row-${i}">
-  <div class="pricing-group-header" onclick="this.parentElement.classList.toggle('open')">
-    <span style="display:flex;align-items:center;gap:6px;">
-      <span class="chevron">▶</span>${esc(g.name)}<span class="group-status-indicator">${statusEl}</span>
+        const statusEl = !groupStatuses ? '' : (
+            groupStatuses[i]==='done' ? '<span style="color:var(--success);font-size:12px;">✓</span>' :
+            groupStatuses[i]==='processing' ? '<span class="group-spinner"><i></i><i></i><i></i></span>' :
+            '<span style="width:8px;height:8px;border-radius:50%;background:var(--border);display:inline-block;"></span>'
+        );
+        html += `<div class="pricing-group" id="aws-group-row-${i}">
+  <div class="pricing-group-header aws-header" onclick="this.parentElement.classList.toggle('open')">
+    <span style="display:flex;align-items:center;gap:6px;"><span class="chevron">▶</span>${esc(g.name)}<span class="group-status-indicator">${statusEl}</span></span>
+    <span style="display:flex;align-items:center;gap:8px;">
+      <span style="font-size:12px;color:var(--text-muted);">${g.services.length} service${g.services.length!==1?'s':''}</span>
+      <span style="font-weight:700;">USD ${g.total.toLocaleString('en-US',{minimumFractionDigits:2})}/mo</span>
     </span>
+  </div>
+  <div class="pricing-services">`;
+
+        const subGroups = []; const subGroupMap = {};
+        g.services.forEach(svc => {
+            const key = svc._sub || '__none__';
+            if (!subGroupMap[key]) { subGroupMap[key] = []; subGroups.push({ sub: svc._sub||null, services: subGroupMap[key] }); }
+            subGroupMap[key].push(svc);
+        });
+        subGroups.forEach(({ sub, services: svcs }) => {
+            if (sub) html += `<div class="pricing-subgroup-header">${esc(sub)}</div>`;
+            svcs.forEach(svc => {
+                const monthly = parseFloat(svc['Service Cost']?.monthly || 0);
+                const props = Object.entries(svc.Properties || {});
+                const id = Math.random().toString(36).substr(2,6);
+                const label = svc.Description ? `${esc((svc['Service Name']||'').trim())} — <em>${esc(svc.Description)}</em>` : esc((svc['Service Name']||'').trim());
+                html += `<div class="pricing-service" onclick="var p=document.getElementById('p-${id}');p.style.display=p.style.display==='block'?'none':'block'">
+    <span style="display:flex;align-items:center;gap:5px;"><span class="svc-chevron">▾</span>${label}</span>
+    <span>${monthly.toFixed(2)}</span></div>`;
+                if (props.length) {
+                    html += `<div class="pricing-props" id="p-${id}">`;
+                    props.forEach(([k,v]) => { html += `<div>${esc(k)}: ${esc(String(v))}</div>`; });
+                    html += `</div>`;
+                }
+            });
+        });
+        html += `  </div></div>`;
+    });
+    document.getElementById('aws-preview-panel').innerHTML = html;
+}
+
+function awsUpdateGroupStatus(index, status) {
+    const row = document.getElementById(`aws-group-row-${index}`);
+    if (!row) return;
+    const span = row.querySelector('.group-status-indicator');
+    if (!span) return;
+    span.innerHTML = status === 'done' ? '<span style="color:var(--success);font-size:12px;">✓</span>' : '<span class="group-spinner"><i></i><i></i><i></i></span>';
+}
+
+
+async function awsGenerate() {
+    if (!awsData) return;
+    const customerName = document.getElementById('aws-customer-name').value.trim() || awsData.Name || 'Customer';
+    const myrRate = parseFloat(document.getElementById('aws-myr-rate').value) || 4.4;
+    const currency = document.getElementById('aws-currency-select').value;
+    const btn = document.getElementById('aws-btn-generate');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"><i></i><i></i><i></i></span>Generating...';
+    awsResetOpenButton(); awsSetStatus('Submitting job...');
+    awsRenderPreview(awsData);
+    try {
+        const resp = await fetch(`${API_URL}/api/generate`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ json: awsData, myr_rate: myrRate, currency, customer_name: customerName }),
+        });
+        if (!resp.ok) { const e = await resp.json().catch(()=>{}); throw new Error(e.error || `Server error ${resp.status}`); }
+        const { job_id, groups, total_groups } = await resp.json();
+        groups.forEach((_, i) => awsUpdateGroupStatus(i, 'processing'));
+        awsSetStatus(`Claude is processing ${total_groups} group${total_groups>1?'s':''}...`);
+        const result = await pollForResult(job_id, groups, awsUpdateGroupStatus);
+        window._awsHtml = result.html;
+        awsSetOpenButtonReady();
+        awsSetStatus(`✓ Done — ${result.customer_name}`, 'success');
+        document.getElementById('aws-open-prompt').style.display = 'block';
+    } catch(e) {
+        awsSetStatus(e.message, 'error');
+        document.getElementById('aws-open-prompt').style.display = 'none';
+    } finally {
+        btn.disabled = false; btn.textContent = 'Generate Table';
+    }
+}
+
+function awsOpenTable() {
+    if (!window._awsHtml) return;
+    const blob = new Blob([window._awsHtml], { type: 'text/html' });
+    window.open(URL.createObjectURL(blob), '_blank');
+}
+
+function awsSetOpenButtonReady() {
+    const btn = document.getElementById('aws-btn-open-table');
+    btn.disabled = false; btn.classList.add('ready');
+    document.getElementById('aws-open-hint').style.display = 'block';
+}
+function awsResetOpenButton() {
+    const btn = document.getElementById('aws-btn-open-table');
+    btn.disabled = true; btn.classList.remove('ready');
+    document.getElementById('aws-open-hint').style.display = 'none';
+}
+function awsInvalidate(reason) {
+    if (!window._awsHtml) return;
+    window._awsHtml = null; awsResetOpenButton();
+    document.getElementById('aws-open-prompt').style.display = 'none';
+    awsSetStatus(reason);
+}
+function awsSetStatus(msg, type = '') {
+    const el = document.getElementById('aws-status-area');
+    el.textContent = msg; el.className = 'status-area' + (type ? ` ${type}` : '');
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GCP TAB
+// ══════════════════════════════════════════════════════════════════════════════
+
+let gcpData = null; // parsed + grouped from pasted text
+
+function initGCP() {
+    document.getElementById('gcp-btn-parse').addEventListener('click', gcpParse);
+    document.getElementById('gcp-btn-generate').addEventListener('click', gcpGenerate);
+    document.getElementById('gcp-btn-open-table').addEventListener('click', gcpOpenTable);
+
+    // Enable Parse button only when both customer name AND paste area have content
+    const gcpUpdateParseBtn = () => {
+        const hasName = document.getElementById('gcp-customer-name').value.trim().length > 0;
+        const hasPaste = document.getElementById('gcp-paste-area').value.trim().length > 0;
+        document.getElementById('gcp-btn-parse').disabled = !(hasName && hasPaste);
+    };
+
+    // If paste or name changes after a parse, invalidate so user must re-parse
+    // gcpUpdateParseBtn is called at the end so button state stays correct
+    const gcpInvalidateOnChange = () => {
+        if (gcpData) {
+            gcpData = null;
+            document.getElementById('gcp-btn-generate').disabled = true;
+            gcpResetOpenButton();
+            document.getElementById('gcp-open-prompt').style.display = 'none';
+            gcpSetStatus('Paste changed — please parse again.');
+        }
+        gcpUpdateParseBtn();
+    };
+    document.getElementById('gcp-paste-area').addEventListener('input', gcpInvalidateOnChange);
+    document.getElementById('gcp-customer-name').addEventListener('input', gcpInvalidateOnChange);
+
+    document.getElementById('gcp-currency-select').addEventListener('change', function() {
+        const cur = this.value;
+        document.getElementById('gcp-currency-label').textContent = cur;
+        document.getElementById('gcp-rate-link').href = `https://www.maybank2u.com.my/maybank2u/malaysia/en/personal/rates/forex_rates.page`;
+        document.getElementById('gcp-usd-rate').value = cur === 'SGD' ? '1.35' : '4.4';
+        gcpInvalidate('Currency changed — please regenerate.');
+    });
+    document.getElementById('gcp-usd-rate').addEventListener('change', () => gcpInvalidate('Rate changed — please regenerate.'));
+}
+
+function gcpParse() {
+    const customerName = document.getElementById('gcp-customer-name').value.trim();
+    const text = document.getElementById('gcp-paste-area').value.trim();
+    if (!customerName) { gcpSetStatus('Please enter a customer name first.', 'error'); return; }
+    if (!text) { gcpSetStatus('Please paste your GCP estimate first.', 'error'); return; }
+
+    const btn = document.getElementById('gcp-btn-parse');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"><i></i><i></i><i></i></span>Parsing...';
+    gcpSetStatus('Claude is reading the estimate...');
+
+    fetch(`${API_URL}/api/parse-gcp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+    })
+    .then(r => r.json())
+    .then(result => {
+        if (result.error) throw new Error(result.error);
+        if (!result.groups || !result.groups.length) throw new Error('Could not detect any service groups. Make sure you copied from the GCP Calculator estimate page.');
+
+        // Extract authoritative total directly from raw text using regex — avoids floating point issues
+        const totalMatch = text.match(/Total estimated cost\$?([\d,]+(?:\.\d+)?)/i);
+        const authTotal = totalMatch ? parseFloat(totalMatch[1].replace(/,/g, '')) : result.total;
+
+        gcpData = { groups: result.groups, total: authTotal, calcUrl: '' };
+        gcpRenderPreview(gcpData);
+        document.getElementById('gcp-btn-generate').disabled = false;
+        const gcpParsedName = document.getElementById('gcp-customer-name').value.trim();
+        if (gcpParsedName) saveCustomerName(gcpParsedName);
+        gcpSetStatus(`✓ Parsed ${result.groups.length} group${result.groups.length !== 1 ? 's' : ''}, ${result.groups.reduce((s,g) => s + g.services.length, 0)} services`, 'success');
+    })
+    .catch(e => {
+        gcpSetStatus(e.message, 'error');
+        document.getElementById('gcp-btn-generate').disabled = true;
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.textContent = 'Parse Estimate';
+        // Re-check if both fields still have content
+        const hasName = document.getElementById('gcp-customer-name').value.trim().length > 0;
+        const hasPaste = document.getElementById('gcp-paste-area').value.trim().length > 0;
+        btn.disabled = !(hasName && hasPaste);
+    });
+}
+
+
+
+function gcpRenderPreview(data, groupStatuses) {
+    const customerName = document.getElementById('gcp-customer-name').value || 'Unknown';
+    const calcUrl = data.calcUrl || '';
+    const totalMonthly = data.groups.reduce((s, g) => s + g.total, 0);
+
+    let html = `<div style="margin-bottom:16px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;">
+  <div style="font-size:14px;font-weight:700;">${esc(customerName)}</div>
+  <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+    Total: <strong style="color:var(--text);">USD ${totalMonthly.toLocaleString('en-US',{minimumFractionDigits:2})}/mo</strong>
+    &nbsp;·&nbsp; ${(totalMonthly*12).toLocaleString('en-US',{minimumFractionDigits:2})}/yr &nbsp;·&nbsp; USD
+  </div>
+  ${calcUrl ? `<a href="${calcUrl}" target="_blank" style="font-size:11px;color:var(--gcp);margin-top:6px;display:inline-block;">Open in GCP Calculator ↗</a>` : ''}
+</div>`;
+
+    data.groups.forEach((g, i) => {
+        const statusEl = !groupStatuses ? '' : (
+            groupStatuses[i]==='done' ? '<span style="color:var(--success);font-size:12px;">✓</span>' :
+            groupStatuses[i]==='processing' ? '<span class="group-spinner"><i></i><i></i><i></i></span>' :
+            '<span style="width:8px;height:8px;border-radius:50%;background:var(--border);display:inline-block;"></span>'
+        );
+        html += `<div class="pricing-group" id="gcp-group-row-${i}">
+  <div class="pricing-group-header gcp-header" onclick="this.parentElement.classList.toggle('open')">
+    <span style="display:flex;align-items:center;gap:6px;"><span class="chevron">▶</span>${esc(g.name)}<span class="group-status-indicator">${statusEl}</span></span>
     <span style="display:flex;align-items:center;gap:8px;">
       <span style="font-size:12px;color:var(--text-muted);">${g.services.length} service${g.services.length!==1?'s':''}</span>
       <span style="font-weight:700;">USD ${g.total.toLocaleString('en-US',{minimumFractionDigits:2})}/mo</span>
@@ -173,171 +416,363 @@ function renderPreview(data, groupStatuses) {
   <div class="pricing-services">`;
 
         g.services.forEach(svc => {
-            const monthly = parseFloat(svc['Service Cost']?.monthly || 0);
-            const props = Object.entries(svc.Properties || {});
             const id = Math.random().toString(36).substr(2,6);
-            const label = svc.Description ? `${esc((svc['Service Name']||'').trim())} — <em>${esc(svc.Description)}</em>` : esc((svc['Service Name']||'').trim());
-            const subLabel = svc._sub ? ` <span style="font-size:10px;color:var(--text-muted);">[${esc(svc._sub)}]</span>` : '';
             html += `<div class="pricing-service" onclick="var p=document.getElementById('p-${id}');p.style.display=p.style.display==='block'?'none':'block'">
-    <span style="display:flex;align-items:center;gap:5px;"><span class="svc-chevron">▾</span>${label}${subLabel}</span>
-    <span>${monthly.toFixed(2)}</span>
-  </div>`;
-            if (props.length) {
-                html += `<div class="pricing-props" id="p-${id}">`;
-                props.forEach(([k,v]) => { html += `<div>${esc(k)}: ${esc(String(v))}</div>`; });
+    <span style="display:flex;align-items:center;gap:5px;"><span class="svc-chevron">▾</span>${esc(svc.name)}</span>
+    <span>${(svc.cost||0).toFixed(2)}</span></div>`;
+            const fields = svc.fields || [];
+            if (fields.length) {
+                html += `<div class="pricing-props" id="p-${id}" style="display:none">`;
+                fields.forEach(f => {
+                    const costStr = (f.cost !== null && f.cost !== undefined) ? ` <span style="color:var(--text);">($${f.cost.toFixed(2)})</span>` : '';
+                    html += `<div>${esc(f.key)}: ${esc(f.value)}${costStr}</div>`;
+                });
                 html += `</div>`;
             }
         });
-
-        html += `  </div>
-</div>`;
+        html += `  </div></div>`;
     });
 
-    document.getElementById('preview-panel').innerHTML = html;
+    document.getElementById('gcp-preview-panel').innerHTML = html;
 }
 
-function updateGroupStatus(index, status) {
-    const row = document.getElementById(`group-row-${index}`);
+function gcpUpdateGroupStatus(index, status) {
+    const row = document.getElementById(`gcp-group-row-${index}`);
     if (!row) return;
-    let statusSpan = row.querySelector('.group-status-indicator');
-    if (!statusSpan) return;
-    if (status === 'done') {
-        statusSpan.innerHTML = '<span style="color:var(--success);font-size:12px;">✓</span>';
-    } else if (status === 'processing') {
-        statusSpan.innerHTML = '<span class="group-spinner"></span>';
-    }
+    const span = row.querySelector('.group-status-indicator');
+    if (!span) return;
+    span.innerHTML = status === 'done' ? '<span style="color:var(--success);font-size:12px;">✓</span>' : '<span class="group-spinner"><i></i><i></i><i></i></span>';
 }
 
-// ── Generate ──────────────────────────────────────────────────────────────────
-
-async function generate() {
-    if (!parsedData) return;
-
-    const myrRate = parseFloat(document.getElementById('myr-rate').value) || 4.4;
-    const currency = document.getElementById('currency-select').value;
-    const btn = document.getElementById('btn-generate');
-
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span>Generating...';
-    resetOpenButton();
-    setStatus('Submitting job...');
-
-    // Re-render preview with all groups in waiting state
-    renderPreview(parsedData);
-
+async function gcpGenerate() {
+    if (!gcpData) return;
+    const customerName = document.getElementById('gcp-customer-name').value || 'Customer';
+    const usdRate  = parseFloat(document.getElementById('gcp-usd-rate').value) || 4.4;
+    const currency = document.getElementById('gcp-currency-select').value;
+    const btn = document.getElementById('gcp-btn-generate');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"><i></i><i></i><i></i></span>Generating...';
+    gcpResetOpenButton(); gcpSetStatus('Submitting job...');
     try {
-        const resp = await fetch(`${API_URL}/api/generate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ json: parsedData, myr_rate: myrRate, currency: currency }),
+        const resp = await fetch(`${API_URL}/api/generate-gcp`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ groups: gcpData.groups, customer_name: customerName, usd_rate: usdRate, currency, calc_url: gcpData.calcUrl || '' }),
         });
-        if (!resp.ok) {
-            const err = await resp.json().catch(() => ({}));
-            throw new Error(err.error || `Server error ${resp.status}`);
-        }
+        if (!resp.ok) { const e = await resp.json().catch(()=>{}); throw new Error(e.error || `Server error ${resp.status}`); }
         const { job_id, groups, total_groups } = await resp.json();
-
-        // Mark all as processing
-        groups.forEach((_, i) => updateGroupStatus(i, 'processing'));
-        setStatus(`Claude is processing ${total_groups} group${total_groups > 1 ? 's' : ''}...`);
-
-        // Poll until done
-        const result = await pollForResult(job_id, groups);
-
-        window._generatedHtml = result.html;
-        setOpenButtonReady();
-        setStatus(`✓ Done — ${result.customer_name}`, 'success');
-        document.getElementById('open-prompt').style.display = 'block';
-
+        groups.forEach((_, i) => gcpUpdateGroupStatus(i, 'processing'));
+        gcpSetStatus(`Claude is processing ${total_groups} group${total_groups>1?'s':''}...`);
+        const result = await pollForResult(job_id, groups, gcpUpdateGroupStatus);
+        window._gcpHtml = result.html;
+        gcpSetOpenButtonReady();
+        gcpSetStatus(`✓ Done — ${result.customer_name}`, 'success');
+        document.getElementById('gcp-open-prompt').style.display = 'block';
     } catch(e) {
-        setStatus(e.message, 'error');
-        document.getElementById('open-prompt').style.display = 'none';
+        gcpSetStatus(e.message, 'error');
+        document.getElementById('gcp-open-prompt').style.display = 'none';
     } finally {
-        btn.disabled = false;
-        btn.textContent = 'Generate Table';
+        btn.disabled = false; btn.textContent = 'Generate Table';
     }
 }
 
-async function pollForResult(jobId, groups, maxWait = 300000, interval = 3000) {
+function gcpOpenTable() {
+    if (!window._gcpHtml) return;
+    const blob = new Blob([window._gcpHtml], { type: 'text/html' });
+    window.open(URL.createObjectURL(blob), '_blank');
+}
+function gcpSetOpenButtonReady() {
+    const btn = document.getElementById('gcp-btn-open-table');
+    btn.disabled = false; btn.classList.add('ready');
+    document.getElementById('gcp-open-hint').style.display = 'block';
+}
+function gcpResetOpenButton() {
+    const btn = document.getElementById('gcp-btn-open-table');
+    btn.disabled = true; btn.classList.remove('ready');
+    document.getElementById('gcp-open-hint').style.display = 'none';
+}
+function gcpInvalidate(reason) {
+    if (!window._gcpHtml) return;
+    window._gcpHtml = null; gcpResetOpenButton();
+    document.getElementById('gcp-open-prompt').style.display = 'none';
+    gcpSetStatus(reason);
+}
+function gcpSetStatus(msg, type = '') {
+    const el = document.getElementById('gcp-status-area');
+    el.textContent = msg; el.className = 'status-area' + (type ? ` ${type}` : '');
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SHARED — polling (used by both AWS and GCP)
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function pollForResult(jobId, groups, updateStatusFn, maxWait = 300000, interval = 3000) {
     const deadline = Date.now() + maxWait;
     const doneSet = new Set();
-
     while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, interval));
-
         const resp = await fetch(`${API_URL}/api/status?job_id=${jobId}`);
         if (!resp.ok) continue;
         const data = await resp.json();
-
         if (data.status === 'error') throw new Error(data.error || 'Generation failed');
-
-        // Update group statuses based on groups_done list
         if (data.groups_done) {
             data.groups_done.forEach(name => {
                 const i = (groups || []).indexOf(name);
-                if (i >= 0 && !doneSet.has(i)) {
-                    doneSet.add(i);
-                    updateGroupStatus(i, 'done');
-                }
+                if (i >= 0 && !doneSet.has(i)) { doneSet.add(i); updateStatusFn(i, 'done'); }
             });
-            setStatus(`Claude is processing — ${data.completed} / ${data.total} chunks done...`);
         }
-
         if (data.status === 'done') {
-            // Mark all done
-            (groups || []).forEach((_, i) => updateGroupStatus(i, 'done'));
+            (groups || []).forEach((_, i) => updateStatusFn(i, 'done'));
             return data;
         }
     }
     throw new Error('Timed out. Please try again.');
 }
 
-// ── Open table button ─────────────────────────────────────────────────────────
 
-function setOpenButtonReady() {
-    const btn = document.getElementById('btn-open-table');
-    btn.disabled = false;
-    btn.classList.add('ready');
-    document.getElementById('open-hint').style.display = 'block';
-}
+// ══════════════════════════════════════════════════════════════════════════════
+// AZURE TAB
+// ══════════════════════════════════════════════════════════════════════════════
 
-function resetOpenButton() {
-    const btn = document.getElementById('btn-open-table');
-    btn.disabled = true;
-    btn.classList.remove('ready');
-    document.getElementById('open-hint').style.display = 'none';
-}
+let azureFile = null;
+let azureData = null;
 
-function openTable() {
-    if (!window._generatedHtml) return;
-    const blob = new Blob([window._generatedHtml], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
-}
+function initAzure() {
+    const uploadArea = document.getElementById('azure-upload-area');
+    const fileInput  = document.getElementById('azure-file-input');
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+    // Upload area always active — Parse button enabled when both name AND file present
+    uploadArea.style.opacity = '1';
+    uploadArea.style.pointerEvents = 'auto';
 
-function invalidateGeneratedTable(reason) {
-    if (!window._generatedHtml) return; // nothing generated yet, nothing to do
-    window._generatedHtml = null;
-    resetOpenButton();
-    document.getElementById('open-prompt').style.display = 'none';
-    setStatus(reason);
-}
+    const azureUpdateParseBtn = () => {
+        const hasName = document.getElementById('azure-customer-name').value.trim().length > 0;
+        document.getElementById('azure-btn-parse').disabled = !(hasName && azureFile);
+    };
+    document.getElementById('azure-customer-name').addEventListener('input', azureUpdateParseBtn);
 
-function setStatus(msg, type = '') {
-    const el = document.getElementById('status-area');
-    el.textContent = msg;
-    el.className = 'status-area' + (type ? ` ${type}` : '');
-}
-
-function readFile(file) {
-    if (file && typeof file.text === 'function') return file.text();
-    return new Promise((resolve, reject) => {
-        if (!file || !(file instanceof Blob)) { reject(new Error('No valid file')); return; }
-        const reader = new FileReader();
-        reader.onload = e => resolve(e.target.result);
-        reader.onerror = () => reject(new Error('Failed to read file'));
-        reader.readAsText(file);
+    document.getElementById('azure-upload-browse').addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
+    uploadArea.addEventListener('click', e => { if (e.target.id === 'azure-btn-clear' || e.target.id === 'azure-upload-browse') return; if (!azureFile) fileInput.click(); });
+    uploadArea.addEventListener('dragover',  e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+    uploadArea.addEventListener('drop', e => {
+        e.preventDefault(); uploadArea.classList.remove('dragover');
+        const f = e.dataTransfer.files[0];
+        if (f && f.name.endsWith('.xlsx')) azureStageFile(f, azureUpdateParseBtn);
+        else azureSetStatus('Please drop a .xlsx file', 'error');
     });
+    fileInput.addEventListener('change', () => { if (fileInput.files[0]) azureStageFile(fileInput.files[0], azureUpdateParseBtn); });
+    document.getElementById('azure-btn-clear').addEventListener('click', () => { azureClearFile(); azureUpdateParseBtn(); });
+    document.getElementById('azure-btn-parse').addEventListener('click', azureParse);
+    document.getElementById('azure-btn-generate').addEventListener('click', azureGenerate);
+    document.getElementById('azure-btn-open-table').addEventListener('click', azureOpenTable);
+
+    document.getElementById('azure-currency-select').addEventListener('change', function() {
+        const cur = this.value;
+        document.getElementById('azure-currency-label').textContent = cur;
+        document.getElementById('azure-usd-rate').value = cur === 'SGD' ? '1.35' : '4.4';
+        azureInvalidate('Currency changed — please regenerate.');
+    });
+    document.getElementById('azure-usd-rate').addEventListener('change', () => azureInvalidate('Rate changed — please regenerate.'));
+}
+
+function azureStageFile(file, callback) {
+    azureFile = file;
+    document.getElementById('azure-upload-prompt').style.display = 'none';
+    document.getElementById('azure-upload-ready').style.display = 'flex';
+    document.getElementById('azure-file-name').textContent = file.name;
+    azureSetStatus('');
+    if (callback) callback();
+}
+
+async function azureParse() {
+    if (!azureFile) return;
+    const customerName = document.getElementById('azure-customer-name').value.trim() || 'Customer';
+    const btn = document.getElementById('azure-btn-parse');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"><i></i><i></i><i></i></span>Parsing...';
+    azureSetStatus('Uploading estimate...');
+
+    // Yield to browser to let dots render before heavy work
+    await new Promise(r => setTimeout(r, 50));
+
+    try {
+        // FileReader.readAsDataURL — browser handles base64 encoding natively, no main thread blocking
+        const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(azureFile);
+        });
+
+        // Yield again before JSON.stringify to keep spinner alive during serialisation
+        await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+
+        const payload = JSON.stringify({ xlsx_b64: base64, filename: azureFile.name, customer_name: customerName });
+
+        // POST — returns job_id immediately (async processing)
+        const resp = await fetch(`${API_URL}/api/parse-azure`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+        });
+        if (!resp.ok) { const e = await resp.json().catch(()=>{}); throw new Error(e.error || `Server error ${resp.status}`); }
+        const { job_id } = await resp.json();
+
+        // Poll for result
+        azureSetStatus('Claude is reading the estimate...');
+        const result = await pollForAzureParse(job_id);
+
+        azureData = result;
+        azureData.customer_name = customerName;
+        azureRenderPreview(azureData);
+        document.getElementById('azure-btn-generate').disabled = false;
+        saveCustomerName(customerName);
+        azureSetStatus(`✓ Parsed ${result.groups.length} group${result.groups.length !== 1 ? 's' : ''}, ${result.groups.reduce((s,g) => s + g.services.length, 0)} services`, 'success');
+    } catch(e) {
+        azureSetStatus(e.message, 'error');
+        document.getElementById('azure-btn-generate').disabled = true;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Parse Estimate';
+        const hasName = document.getElementById('azure-customer-name').value.trim().length > 0;
+        btn.disabled = !(hasName && azureFile);
+    }
+}
+
+async function pollForAzureParse(jobId, maxWait = 120000, interval = 2000) {
+    const deadline = Date.now() + maxWait;
+    while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, interval));
+        const resp = await fetch(`${API_URL}/api/status?job_id=${jobId}`);
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        if (data.status === 'error') throw new Error(data.error || 'Parse failed');
+        if (data.status === 'done') return data;
+    }
+    throw new Error('Timed out. Please try again.');
+}
+
+function azureClearFile() {
+    azureFile = null; azureData = null;
+    document.getElementById('azure-file-input').value = '';
+    document.getElementById('azure-upload-prompt').style.display = 'block';
+    document.getElementById('azure-upload-ready').style.display = 'none';
+    document.getElementById('azure-btn-parse').disabled = true;
+    document.getElementById('azure-btn-generate').disabled = true;
+    document.getElementById('azure-preview-panel').innerHTML = '<div class="preview-placeholder"><p>Upload an Azure estimate .xlsx to see the summary.</p></div>';
+    azureResetOpenButton(); azureSetStatus('');
+    window._azureHtml = null;
+    document.getElementById('azure-open-prompt').style.display = 'none';
+}
+
+function azureRenderPreview(data, groupStatuses) {
+    const customerName = document.getElementById('azure-customer-name').value.trim() || data.customer_name || 'Azure Estimate';
+    const totalMonthly = data.total || 0;
+
+    let html = `<div style="margin-bottom:16px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;">
+  <div style="font-size:14px;font-weight:700;">${esc(customerName)}</div>
+  <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+    Total: <strong style="color:var(--text);">USD ${totalMonthly.toLocaleString('en-US',{minimumFractionDigits:2})}/mo</strong>
+    &nbsp;·&nbsp; ${(totalMonthly*12).toLocaleString('en-US',{minimumFractionDigits:2})}/yr &nbsp;·&nbsp; USD
+  </div>
+</div>`;
+
+    (data.groups || []).forEach((g, i) => {
+        const statusEl = !groupStatuses ? '' : (
+            groupStatuses[i]==='done' ? '<span style="color:var(--success);font-size:12px;">✓</span>' :
+            groupStatuses[i]==='processing' ? '<span class="group-spinner"><i></i><i></i><i></i></span>' :
+            '<span style="width:8px;height:8px;border-radius:50%;background:var(--border);display:inline-block;"></span>'
+        );
+        html += `<div class="pricing-group" id="azure-group-row-${i}">
+  <div class="pricing-group-header azure-header" onclick="this.parentElement.classList.toggle('open')">
+    <span style="display:flex;align-items:center;gap:6px;"><span class="chevron">▶</span>${esc(g.name)}<span class="group-status-indicator">${statusEl}</span></span>
+    <span style="display:flex;align-items:center;gap:8px;">
+      <span style="font-size:12px;color:var(--text-muted);">${g.services.length} service${g.services.length!==1?'s':''}</span>
+      <span style="font-weight:700;">USD ${g.total.toLocaleString('en-US',{minimumFractionDigits:2})}/mo</span>
+    </span>
+  </div>
+  <div class="pricing-services">`;
+
+        g.services.forEach(svc => {
+            const id = Math.random().toString(36).substr(2,6);
+            const displayName = svc.service_type ? `${esc(svc.name)} <span style="color:var(--text-muted);font-weight:400;">(${esc(svc.service_type)})</span>` : esc(svc.name);
+            html += `<div class="pricing-service" onclick="var p=document.getElementById('p-${id}');p.style.display=p.style.display==='block'?'none':'block'">
+    <span style="display:flex;align-items:center;gap:5px;"><span class="svc-chevron">▾</span>${displayName}</span>
+    <span>${(svc.cost||0).toFixed(2)}</span></div>`;
+            if (svc.description) {
+                const lines = svc.description.split('\n').filter(l => l.trim());
+                html += `<div class="pricing-props" id="p-${id}" style="display:none">`;
+                lines.forEach(l => { html += `<div>${esc(l.trim())}</div>`; });
+                html += `</div>`;
+            }
+        });
+        html += `  </div></div>`;
+    });
+
+    document.getElementById('azure-preview-panel').innerHTML = html;
+}
+
+function azureUpdateGroupStatus(index, status) {
+    const row = document.getElementById(`azure-group-row-${index}`);
+    if (!row) return;
+    const span = row.querySelector('.group-status-indicator');
+    if (!span) return;
+    span.innerHTML = status === 'done' ? '<span style="color:var(--success);font-size:12px;">✓</span>' : '<span class="group-spinner"><i></i><i></i><i></i></span>';
+}
+
+async function azureGenerate() {
+    if (!azureData) return;
+    const customerName = document.getElementById('azure-customer-name').value.trim() || azureData.customer_name || 'Customer';
+    const usdRate  = parseFloat(document.getElementById('azure-usd-rate').value) || 4.4;
+    const currency = document.getElementById('azure-currency-select').value;
+    const btn = document.getElementById('azure-btn-generate');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"><i></i><i></i><i></i></span>Generating...';
+    azureResetOpenButton(); azureSetStatus('Submitting job...');
+    // Yield to browser to let spinner render
+    await new Promise(r => requestAnimationFrame(() => setTimeout(r, 50)));
+    try {
+        const resp = await fetch(`${API_URL}/api/generate-azure`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ groups: azureData.groups, customer_name: customerName, usd_rate: usdRate, currency }),
+        });
+        if (!resp.ok) { const e = await resp.json().catch(()=>{}); throw new Error(e.error || `Server error ${resp.status}`); }
+        const { job_id, groups, total_groups } = await resp.json();
+        groups.forEach((_, i) => azureUpdateGroupStatus(i, 'processing'));
+        azureSetStatus(`Claude is processing ${total_groups} group${total_groups>1?'s':''}...`);
+        const result = await pollForResult(job_id, groups, azureUpdateGroupStatus);
+        window._azureHtml = result.html;
+        azureSetOpenButtonReady();
+        azureSetStatus(`✓ Done — ${result.customer_name}`, 'success');
+        document.getElementById('azure-open-prompt').style.display = 'block';
+    } catch(e) {
+        azureSetStatus(e.message, 'error');
+        document.getElementById('azure-open-prompt').style.display = 'none';
+    } finally {
+        btn.disabled = false; btn.textContent = 'Generate Table';
+    }
+}
+
+function azureOpenTable() {
+    if (!window._azureHtml) return;
+    const blob = new Blob([window._azureHtml], { type: 'text/html' });
+    window.open(URL.createObjectURL(blob), '_blank');
+}
+function azureSetOpenButtonReady() {
+    const btn = document.getElementById('azure-btn-open-table');
+    btn.disabled = false; btn.classList.add('ready');
+    document.getElementById('azure-open-hint').style.display = 'block';
+}
+function azureResetOpenButton() {
+    const btn = document.getElementById('azure-btn-open-table');
+    btn.disabled = true; btn.classList.remove('ready');
+    document.getElementById('azure-open-hint').style.display = 'none';
+}
+function azureInvalidate(reason) {
+    if (!window._azureHtml) return;
+    window._azureHtml = null; azureResetOpenButton();
+    document.getElementById('azure-open-prompt').style.display = 'none';
+    azureSetStatus(reason);
+}
+function azureSetStatus(msg, type = '') {
+    const el = document.getElementById('azure-status-area');
+    el.textContent = msg; el.className = 'status-area' + (type ? ` ${type}` : '');
 }

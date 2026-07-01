@@ -11,6 +11,10 @@ import os
 import re
 import uuid
 import hashlib
+import traceback
+import base64
+import io
+import openpyxl
 from datetime import datetime
 
 REGION = "us-east-1"
@@ -28,10 +32,13 @@ GROUP_PROMPT = """You are generating service description lines for an AWS pricin
 Output ONLY the service lines for the given batch — no <tr> wrapper, no group heading, no totals, no cost lines.
 
 Format each service as:
-ServiceName - Description<br>
+ServiceName<br>
 - field: value<br>
 - field: value<br>
 <br>
+
+If the service has a Description, append it to the name with a dash: ServiceName - Description<br>
+If there is NO Description, just use the ServiceName alone with NO dash or trailing punctuation.
 
 (blank <br> line between each service)
 
@@ -46,7 +53,6 @@ ServiceName - Description<br>
 - Decimal percentages (0.1, 0.03, 1) → 10%, 3%, 100% for fields like "Estimated annual increase", "Estimated daily change", "Mobile sampling rate"
 - EC2/RDS instance types: the vCPU and Memory values are already provided in the Properties as "vCPU" and "Memory" — include them after the instance type line
 - Pricing strategy: shorten → "Compute Savings Plans 3yr No Upfront", "On Demand", "Reserved 1yr No Upfront"
-- Service name is plain text, followed by " - Description" if a description exists
 - Each field line starts with "- "
 - No &nbsp; indentation
 
@@ -86,7 +92,7 @@ def get_ec2_specs(instance_type):
                 return result
     except Exception as e:
         print(f"Spec lookup failed for {instance_type}: {e}")
-        import traceback; traceback.print_exc()
+        traceback.print_exc()
     _spec_cache[instance_type] = ("?", "?")
     return "?", "?"
 
@@ -202,11 +208,118 @@ def handler(event, context):
         return cors_response(200, "")
     if path == "/api/generate":
         return handle_generate(event)
+    if path == "/api/generate-gcp":
+        return handle_generate_gcp(event)
     if path == "/api/status":
         return handle_status(event)
+    if path == "/api/parse-gcp":
+        return handle_parse_gcp(event)
+    if path == "/api/parse-azure":
+        return handle_parse_azure(event)
+    if path == "/__parse-azure":
+        return handle_do_parse_azure(event)
     if path == "/__process":
         return handle_process(event)
+    if path == "/__process-gcp":
+        return handle_process_gcp(event)
+    if path == "/api/generate-azure":
+        return handle_generate_azure(event)
+    if path == "/__process-azure":
+        return handle_process_azure(event)
     return cors_response(404, json.dumps({"error": f"Not found: {path}"}))
+
+
+GCP_PARSE_PROMPT = """You are parsing a GCP Calculator estimate that was copy-pasted as raw text.
+
+Extract ALL services and return ONLY a JSON object in this exact structure:
+{
+  "total_estimated_cost": 2646.53,
+  "groups": [
+    {
+      "name": "Compute",
+      "services": [
+        {
+          "name": "Core Server (Compute Engine)",
+          "cost": 113.82,
+          "fields": [
+            { "key": "Machine type", "value": "e2-standard-4, vCPUs: 4, RAM: 16 GB" },
+            { "key": "Boot disk size (GiB)", "value": "150 GiB" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+RULES:
+- total_estimated_cost = the value from "Total estimated cost$X,XXX.XX" at the end of the paste — this is the authoritative total, extract it exactly
+- Extract every group (Compute, Networking, Storage, Security, Databases, etc.)
+- Extract every service under each group with its exact dollar cost
+- Extract every field/value pair for each service
+- SKIP fields where value is "false"
+- SKIP "Service type" fields
+- Keep ALL "Region", "Source Location", and "Destination Location" fields with their exact values as shown
+- If there are multiple Region fields for the same service, label the second one "Region (Internal ALB)"
+- Use the exact service name as shown (e.g. "S2S VPN (Cloud VPN)")
+- Service cost = dollar amount IMMEDIATELY AFTER the service name — never use a dollar amount that appears BEFORE the service name
+- A dollar amount before a service name is the GROUP subtotal, not the service cost — ignore it
+- Example: "$6.36Cloud DNS (Cloud DNS)$4.40..." → Cloud DNS cost = 4.40 (not 6.36)
+- Example: "Secret Manager$1.96..." → Secret Manager cost = 1.96
+- Group name should be Title Case (e.g. "Compute" not "compute")
+- Services that appear BEFORE any group header go into a group called "Other"
+- Return ONLY the JSON object, no explanation, no markdown code blocks"""
+
+
+# ── /api/parse-gcp — use Claude to parse raw GCP paste text into structured JSON ──
+
+def handle_parse_gcp(event):
+    try:
+        body = json.loads(event.get("body", "{}"))
+        text = body.get("text", "").strip()
+        if not text:
+            return cors_response(400, json.dumps({"error": "No text provided"}))
+
+        response = bedrock.invoke_model(
+            modelId=MODEL_ID,
+            body=json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 8000,
+                "system": GCP_PARSE_PROMPT,
+                "messages": [{"role": "user", "content": text}],
+            }),
+            contentType="application/json",
+            accept="application/json",
+        )
+
+        raw = json.loads(response["body"].read())["content"][0]["text"].strip()
+        # Strip markdown code blocks if Claude wrapped the response
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+
+        parsed = json.loads(raw)
+        groups = parsed.get("groups", [])
+
+        # Use the authoritative total extracted from "Total estimated cost" line
+        # Fall back to summing service costs if not present
+        authoritative_total = parsed.get("total_estimated_cost")
+
+        # Calculate group totals from service costs
+        for g in groups:
+            g["total"] = sum(s.get("cost", 0) for s in g.get("services", []))
+
+        calculated_total = sum(g["total"] for g in groups)
+        total = authoritative_total if authoritative_total else calculated_total
+
+        return cors_response(200, json.dumps({
+            "groups": groups,
+            "total": total,
+        }))
+
+    except json.JSONDecodeError as e:
+        return cors_response(500, json.dumps({"error": f"Claude returned invalid JSON: {e}"}))
+    except Exception as e:
+        traceback.print_exc()
+        return cors_response(500, json.dumps({"error": str(e)}))
 
 
 # ── /api/generate — save job, trigger all group workers async ─────────────────
@@ -222,7 +335,8 @@ def handle_generate(event):
         if "Groups" not in data or "Total Cost" not in data:
             return cors_response(400, json.dumps({"error": "Not a valid AWS Pricing Calculator export"}))
 
-        customer_name = data.get("Name", "Customer")
+        # Use user-provided customer name if given, else fall back to JSON name
+        customer_name = body.get("customer_name", "").strip() or data.get("Name", "Customer")
         job_id = uuid.uuid4().hex
 
         # Build chunk list — split large groups into batches of MAX_SERVICES_PER_CHUNK
@@ -250,12 +364,12 @@ def handle_generate(event):
                 json_bytes = json.dumps(data).encode("utf-8")
                 content_hash = hashlib.md5(json_bytes).hexdigest()[:12]
                 timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-                key = f"uploads/{customer_name}/{timestamp}-{content_hash}.json"
+                key = f"uploads/aws/{customer_name}/{timestamp}-{content_hash}.json"
 
                 # Check if identical content already exists
                 existing = s3.list_objects_v2(
                     Bucket=S3_BUCKET,
-                    Prefix=f"uploads/{customer_name}/",
+                    Prefix=f"uploads/aws/{customer_name}/",
                 )
                 already_stored = any(
                     obj["Key"].endswith(f"-{content_hash}.json")
@@ -330,7 +444,7 @@ def handle_generate(event):
         }))
 
     except Exception as e:
-        import traceback; traceback.print_exc()
+        traceback.print_exc()
         return cors_response(500, json.dumps({"error": str(e)}))
 
 
@@ -390,6 +504,23 @@ def handle_status(event):
                 "groups": groups,
             }))
 
+        # Azure parse job — check if result is ready
+        if meta.get("cloud") == "azure_parse":
+            if meta.get("status") == "error":
+                return cors_response(200, json.dumps({"status": "error", "error": meta.get("error", "Parse failed")}))
+            if meta.get("status") == "done":
+                result = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/result.json")["Body"].read())
+                return cors_response(200, json.dumps({"status": "done", **result}))
+            return cors_response(200, json.dumps({"status": "processing"}))
+
+        # GCP job — different assembly path
+        if meta.get("cloud") == "gcp":
+            return assemble_gcp_html(meta, groups, chunks, done_chunks)
+
+        # Azure job — different assembly path
+        if meta.get("cloud") == "azure":
+            return assemble_azure_html(meta, groups, chunks, done_chunks)
+
         # All chunks done — reassemble into group rows
         # Group chunks by group_name, maintaining order
         group_html_parts = {}  # group_name -> {sub_name -> [html_parts]}
@@ -409,6 +540,8 @@ def handle_status(event):
             group_html_parts[gname]["parts"][key].append(partial)
 
         # Build final rows in group order
+        # Load input once outside the loop
+        inp = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/input.json")["Body"].read())
         rows_html = []
         for row_num, gname in enumerate(groups, 1):
             if gname not in group_html_parts:
@@ -419,7 +552,6 @@ def handle_status(event):
             clean_name = re.sub(r"^Original Grouping\s*>\s*", "", gname).strip()
 
             # Calculate group total from input
-            inp = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/input.json")["Body"].read())
             gdata = inp["data"]["Groups"].get(gname, {})
             if isinstance(gdata, list):
                 gdata = {"Services": gdata}
@@ -468,7 +600,7 @@ def handle_status(event):
         }))
 
     except Exception as e:
-        import traceback; traceback.print_exc()
+        traceback.print_exc()
         return cors_response(500, json.dumps({"error": str(e)}))
 
 
@@ -539,7 +671,7 @@ Services JSON:
         )
 
     except Exception as e:
-        import traceback; traceback.print_exc()
+        traceback.print_exc()
         if job_id is not None:
             try:
                 s3.put_object(
@@ -554,7 +686,587 @@ Services JSON:
     return cors_response(200, "")
 
 
+GCP_GROUP_PROMPT = """You are generating service description lines for a GCP pricing proposal table.
+
+The input is structured data parsed from a GCP Calculator estimate page. Each service has a name, total cost, and a list of fields (key/value pairs).
+
+Output ONLY the service lines for the given group — no <tr> wrapper, no group heading, no totals row.
+
+Format each service as:
+ServiceName<br>
+- field: value<br>
+- field: value<br>
+<br>
+
+(blank <br> line between each service)
+
+## RULES
+- Use the service name exactly as given
+- Output EVERY field in the fields list — do not skip, filter, or judge any field
+- Every field line MUST start with "- "
+- No trailing dash or punctuation after service name
+- If a service has zero fields, just output the service name line followed by a blank <br>
+- The cost column is handled separately — do NOT add any cost or price values
+
+Output ONLY the service lines, nothing else."""
+
+
+GCP_HTML_WRAPPER = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{customer_name} — GCP Consumption Table</title>
+<style>
+  body {{ font-family: Arial, sans-serif; font-size: 10pt; margin: 40px; color: #000; background: #fff; }}
+  table {{ border-collapse: collapse; width: 680px; table-layout: auto; }}
+  th, td {{ border: 1px solid #888; padding: 5px 8px; font-size: 10pt; }}
+  th {{ background-color: #1a73e8; color: #fff; font-weight: bold; text-align: center; white-space: nowrap; }}
+  .col-no {{ width: 50px; }}
+  .col-cost {{ width: 110px; }}
+  .no-cell {{ text-align: center; vertical-align: top; }}
+  .desc-cell {{ vertical-align: top; }}
+  .cost-cell {{ text-align: right; vertical-align: top; white-space: nowrap; }}
+  .divider td {{ background-color: #1a73e8; border: none; height: 10px; padding: 0; }}
+  .sum-label {{ text-align: right; }}
+  .sum-value {{ text-align: right; white-space: nowrap; }}
+  .sum-bold td {{ font-weight: bold; }}
+  a {{ color: #1a73e8; font-size: 9.5pt; }}
+</style>
+</head>
+<body>
+<div style="font-family:Arial; font-size:9.5pt; background:#fff8e1; border:1px solid #f0c040; padding:8px 12px; width:656px; margin-bottom:10px;">
+  <b>After pasting into Google Docs:</b><br>
+  1. Select the whole table → click the <b>line &amp; paragraph spacing</b> icon → <b>Remove space after paragraph</b><br>
+  2. Select the whole table → click <b>Table options</b> in the toolbar (top right) → scroll to Colour → set table border to <b>1pt</b>
+</div>
+<table>
+  <colgroup><col class="col-no"><col><col class="col-cost"></colgroup>
+  <tr><th>No</th><th>Description</th><th>Monthly Cost</th></tr>
+{rows}
+  <tr class="divider"><td colspan="3"></td></tr>
+  <tr><td colspan="2" class="sum-label">Total Monthly Cost</td><td class="sum-value">USD {total_monthly}</td></tr>
+  <tr><td colspan="2" class="sum-label">Conversion to __CURRENCY__ ( USD 1 - __CURRENCY__ __RATE__ )</td><td class="sum-value">__CURRENCY__ __LOCAL__</td></tr>
+  <tr><td colspan="2" class="sum-label">Tax (__TAX_PCT__)</td><td class="sum-value">__CURRENCY__ __TAX__</td></tr>
+  <tr class="sum-bold"><td colspan="2" class="sum-label">Total Monthly Payment</td><td class="sum-value">__CURRENCY__ __TOTAL__</td></tr>
+</table>
+{calc_link}
+</body>
+</html>"""
+
+
+# ── GCP HTML assembly ─────────────────────────────────────────────────────────
+
+def assemble_gcp_html(meta, groups, chunks, done_chunks):
+    currency = meta.get("currency", "MYR")
+    tax_pct = "9% GST" if currency == "SGD" else "8% SST"
+    calc_url = meta.get("calc_url", "")
+    calc_link = f'<br><a href="{calc_url}" target="_blank">Calculator Link: {calc_url}</a>' if calc_url else ""
+    rows_html = []
+    for row_num, gname in enumerate(groups, 1):
+        chunk_indices = [i for i, c in enumerate(chunks) if c["group_name"] == gname]
+        inner = "\n".join(done_chunks[i].get("partial_html", "") for i in chunk_indices if i in done_chunks)
+        # Get group total — use the pre-summed total stored on the group object
+        gtotal = sum(
+            c["chunk_data"].get("total", 0)
+            for c in chunks if c["group_name"] == gname
+        )
+        rows_html.append(
+            f'  <tr>\n    <td class="no-cell">{row_num}.</td>\n'
+            f'    <td class="desc-cell">\n<b>{gname}</b><br>\n<br>\n{inner}\n    </td>\n'
+            f'    <td class="cost-cell">USD {gtotal:,.2f}</td>\n  </tr>'
+        )
+    html = GCP_HTML_WRAPPER.format(
+        customer_name=meta["customer_name"],
+        rows="\n".join(rows_html),
+        total_monthly=meta["total_monthly"],
+        calc_link=calc_link,
+    )
+    html = html.replace("__CURRENCY__", currency)
+    html = html.replace("__RATE__", str(meta["usd_rate"]))
+    html = html.replace("__LOCAL__", meta["total_local"])
+    html = html.replace("__TAX_PCT__", tax_pct)
+    html = html.replace("__TAX__", meta["tax"])
+    html = html.replace("__TOTAL__", meta["total_with_tax"])
+    return cors_response(200, json.dumps({
+        "status": "done", "html": html,
+        "customer_name": meta["customer_name"],
+        "total_monthly": meta["total_monthly"],
+    }))
+
+
+# ── /api/generate-gcp ─────────────────────────────────────────────────────────
+
+def handle_generate_gcp(event):
+    try:
+        body = json.loads(event.get("body", "{}"))
+        groups = body.get("groups", [])           # [{name, total, services:[{name,quantity,region,cost}]}]
+        customer_name = body.get("customer_name", "Customer")
+        usd_rate = float(body.get("usd_rate", 4.4))
+        currency = body.get("currency", "MYR")
+        calc_url = body.get("calc_url", "")
+
+        if not groups:
+            return cors_response(400, json.dumps({"error": "No groups provided"}))
+
+        job_id = uuid.uuid4().hex
+        total_monthly = sum(g["total"] for g in groups)
+        total_local = total_monthly * usd_rate
+        tax = total_local * 0.08
+
+        # Save raw groups to S3 under uploads/gcp/
+        if S3_BUCKET:
+            try:
+                raw_bytes = json.dumps({"customer": customer_name, "groups": groups}).encode()
+                content_hash = hashlib.md5(raw_bytes).hexdigest()[:12]
+                timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+                key = f"uploads/gcp/{customer_name}/{timestamp}-{content_hash}.json"
+                existing = s3.list_objects_v2(Bucket=S3_BUCKET, Prefix=f"uploads/gcp/{customer_name}/")
+                already_stored = any(obj["Key"].endswith(f"-{content_hash}.json") for obj in existing.get("Contents", []))
+                if not already_stored:
+                    s3.put_object(Bucket=S3_BUCKET, Key=key, Body=raw_bytes, ContentType="application/json",
+                                  Metadata={"customer": customer_name})
+                    print(f"Saved GCP upload: {key}")
+            except Exception as e:
+                print(f"S3 GCP upload failed (non-fatal): {e}")
+
+        # Build chunks — one per group (GCP groups are smaller than AWS)
+        chunks = [{"group_name": g["name"], "chunk_data": g, "is_nested": False, "sub_name": None} for g in groups]
+        group_names = [g["name"] for g in groups]
+
+        s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/meta.json",
+            Body=json.dumps({
+                "cloud": "gcp",
+                "customer_name": customer_name,
+                "groups": group_names,
+                "chunks": chunks,
+                "total_chunks": len(chunks),
+                "usd_rate": usd_rate,
+                "currency": currency,
+                "total_monthly": f"{total_monthly:,.2f}",
+                "total_local": f"{total_local:,.2f}",
+                "tax": f"{tax:,.2f}",
+                "total_with_tax": f"{total_local + tax:,.2f}",
+                "calc_url": calc_url,
+            }).encode(), ContentType="application/json")
+
+        s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/input.json",
+            Body=json.dumps({"groups": groups, "customer_name": customer_name, "usd_rate": usd_rate, "currency": currency}).encode(),
+            ContentType="application/json")
+
+        fn_name = os.environ.get("WORKER_FUNCTION", "pricing-table-generator")
+        for i in range(len(chunks)):
+            lam.invoke(FunctionName=fn_name, InvocationType="Event",
+                Payload=json.dumps({"path": "/__process-gcp", "httpMethod": "POST",
+                    "body": json.dumps({"job_id": job_id, "chunk_index": i})}).encode())
+
+        return cors_response(200, json.dumps({
+            "job_id": job_id, "customer_name": customer_name,
+            "total_groups": len(groups), "total_chunks": len(chunks),
+            "groups": group_names, "status": "processing",
+        }))
+    except Exception as e:
+        traceback.print_exc()
+        return cors_response(500, json.dumps({"error": str(e)}))
+
+
+# ── /__process-gcp ────────────────────────────────────────────────────────────
+
+def handle_process_gcp(event):
+    job_id = None
+    chunk_index = 0
+    try:
+        body = json.loads(event.get("body", "{}"))
+        job_id = body["job_id"]
+        chunk_index = body["chunk_index"]
+
+        meta = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/meta.json")["Body"].read())
+        chunk = meta["chunks"][chunk_index]
+        group = chunk["chunk_data"]
+        group_name = chunk["group_name"]
+
+        services = group.get("services", [])
+        svc_total = group.get("total", 0)
+        user_msg = f"""Group: {group_name}
+Total: USD {svc_total:,.2f}
+Services:
+{json.dumps(services, indent=2)}"""
+
+        response = bedrock.invoke_model(
+            modelId=MODEL_ID,
+            body=json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 4000,
+                "system": GCP_GROUP_PROMPT,
+                "messages": [{"role": "user", "content": user_msg}],
+            }),
+            contentType="application/json", accept="application/json",
+        )
+        partial_html = json.loads(response["body"].read())["content"][0]["text"].strip()
+        partial_html = re.sub(r"^```html?\s*", "", partial_html)
+        partial_html = re.sub(r"\s*```$", "", partial_html)
+
+        s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/chunk_{chunk_index}.json",
+            Body=json.dumps({"partial_html": partial_html, "group_name": group_name, "sub_name": None}).encode(),
+            ContentType="application/json")
+
+    except Exception as e:
+        traceback.print_exc()
+        if job_id is not None:
+            try:
+                s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/chunk_{chunk_index}.json",
+                    Body=json.dumps({"error": str(e)}).encode(), ContentType="application/json")
+            except Exception:
+                pass
+    return cors_response(200, "")
+
+
+AZURE_PARSE_PROMPT = """You are parsing an Azure pricing estimate exported as Excel (CSV rows).
+
+Each row has these columns: Service category, Service type, Custom name, Region, Description, Estimated monthly cost, Estimated upfront cost.
+
+For each service row, convert the Description into clean bullet points. The Description is a dense comma/semicolon-separated string — break it into meaningful, readable lines.
+
+Return ONLY a JSON object:
+{
+  "customer_name": "Lorem Ipsum",
+  "total": 1197.13,
+  "groups": [
+    {
+      "name": "Compute",
+      "total": 472.0,
+      "services": [
+        {
+          "name": "On Demand Linux t3.medium",
+          "service_type": "Virtual Machines",
+          "region": "Southeast Asia",
+          "cost": 78.69,
+          "description": "- 2 x B2als v2 (2 vCPUs, 4 GB RAM)\n- 730 Hours/month (Pay as you go)\n- OS: Linux\n- Disk: 1 managed disk E6, LRS 13 GB\n- Outbound: 5 GB to East Asia"
+        }
+      ]
+    }
+  ]
+}
+
+RULES:
+- Group services by Service category (Compute, Networking, Databases, Storage, DevOps, etc.)
+- Service name = Custom name if provided, otherwise Service type
+- Description bullet points: extract key specs only — instance size, vCPUs, RAM, hours, storage size, redundancy, tier, key quantities. Skip verbose marketing text.
+- Skip any spec where the quantity is 0 (e.g. "0 managed disks", "0 GB outbound", "0 static IPs") — zero values add no information
+- Each bullet starts with "- " and MUST be separated by actual newline characters \\n in the JSON string
+- Keep descriptions concise — 3-6 bullets per service max
+- customer_name = the estimate name from the header row (row 2)
+- total = the Total value from the summary rows at the bottom
+- Skip rows where Service category is "Support", or where the row contains "Licensing Program", "Billing Account", "Billing Profile", "Disclaimer", or "All prices shown"
+- Return ONLY the JSON, no explanation, no markdown"""
+
+
+AZURE_GROUP_PROMPT = """You are generating service description lines for an Azure pricing proposal table.
+
+Each service has a name, cost, region, and description (already formatted as bullet points).
+
+Output ONLY the service lines for the given group — no <tr> wrapper, no group heading, no totals row.
+
+Format each service as:
+ServiceName (ServiceType)<br>
+- bullet point<br>
+- bullet point<br>
+<br>
+
+(blank <br> line between each service)
+
+RULES:
+- Use the service name and service type as given
+- Output the description bullet points exactly as provided — one per line starting with "- "
+- Do NOT add any cost or price values
+- No trailing punctuation after service name
+
+Output ONLY the service lines, nothing else."""
+
+
+AZURE_HTML_WRAPPER = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{customer_name} — Azure Consumption Table</title>
+<style>
+  body {{ font-family: Arial, sans-serif; font-size: 10pt; margin: 40px; color: #000; background: #fff; }}
+  table {{ border-collapse: collapse; width: 680px; table-layout: auto; }}
+  th, td {{ border: 1px solid #888; padding: 5px 8px; font-size: 10pt; }}
+  th {{ background-color: #0078d4; color: #fff; font-weight: bold; text-align: center; white-space: nowrap; }}
+  .col-no {{ width: 50px; }}
+  .col-cost {{ width: 110px; }}
+  .no-cell {{ text-align: center; vertical-align: top; }}
+  .desc-cell {{ vertical-align: top; }}
+  .cost-cell {{ text-align: right; vertical-align: top; white-space: nowrap; }}
+  .divider td {{ background-color: #0078d4; border: none; height: 10px; padding: 0; }}
+  .sum-label {{ text-align: right; }}
+  .sum-value {{ text-align: right; white-space: nowrap; }}
+  .sum-bold td {{ font-weight: bold; }}
+  a {{ color: #0078d4; font-size: 9.5pt; }}
+</style>
+</head>
+<body>
+<div style="font-family:Arial; font-size:9.5pt; background:#fff8e1; border:1px solid #f0c040; padding:8px 12px; width:656px; margin-bottom:10px;">
+  <b>After pasting into Google Docs:</b><br>
+  1. Select the whole table → click the <b>line &amp; paragraph spacing</b> icon → <b>Remove space after paragraph</b><br>
+  2. Select the whole table → click <b>Table options</b> in the toolbar (top right) → scroll to Colour → set table border to <b>1pt</b>
+</div>
+<table>
+  <colgroup><col class="col-no"><col><col class="col-cost"></colgroup>
+  <tr><th>No</th><th>Description</th><th>Monthly Cost</th></tr>
+{rows}
+  <tr class="divider"><td colspan="3"></td></tr>
+  <tr><td colspan="2" class="sum-label">Total Monthly Cost</td><td class="sum-value">USD {total_monthly}</td></tr>
+  <tr><td colspan="2" class="sum-label">Conversion to __CURRENCY__ ( USD 1 - __CURRENCY__ __RATE__ )</td><td class="sum-value">__CURRENCY__ __LOCAL__</td></tr>
+  <tr><td colspan="2" class="sum-label">Tax (__TAX_PCT__)</td><td class="sum-value">__CURRENCY__ __TAX__</td></tr>
+  <tr class="sum-bold"><td colspan="2" class="sum-label">Total Monthly Payment</td><td class="sum-value">__CURRENCY__ __TOTAL__</td></tr>
+</table>
+</body>
+</html>"""
+
+
+# ── /api/parse-azure — read xlsx, send to Claude, return structured JSON ──────
+
+def handle_parse_azure(event):
+    """Save xlsx to S3, trigger async parse worker, return job_id immediately."""
+    try:
+        body = json.loads(event.get("body", "{}"))
+        xlsx_b64 = body.get("xlsx_b64", "")
+        filename = body.get("filename", "estimate.xlsx")
+        customer_name_override = body.get("customer_name", "").strip()
+        if not xlsx_b64:
+            return cors_response(400, json.dumps({"error": "No xlsx data provided"}))
+
+        xlsx_bytes = base64.b64decode(xlsx_b64)
+        job_id = uuid.uuid4().hex
+
+        # Save xlsx to S3
+        s3_customer = customer_name_override or filename.replace(".xlsx", "")
+        content_hash = hashlib.md5(xlsx_bytes).hexdigest()[:12]
+        timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        xlsx_key = f"uploads/azure/{s3_customer}/{timestamp}-{content_hash}.xlsx"
+        s3.put_object(Bucket=S3_BUCKET, Key=xlsx_key, Body=xlsx_bytes,
+                      ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        # Save job meta
+        s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/meta.json",
+            Body=json.dumps({
+                "cloud": "azure_parse",
+                "xlsx_key": xlsx_key,
+                "filename": filename,
+                "customer_name": customer_name_override,
+                "status": "processing",
+            }).encode(), ContentType="application/json")
+
+        # Trigger async worker
+        fn_name = os.environ.get("WORKER_FUNCTION", "pricing-table-generator")
+        lam.invoke(FunctionName=fn_name, InvocationType="Event",
+            Payload=json.dumps({"path": "/__parse-azure", "httpMethod": "POST",
+                "body": json.dumps({"job_id": job_id})}).encode())
+
+        return cors_response(200, json.dumps({"job_id": job_id, "status": "processing"}))
+
+    except Exception as e:
+        traceback.print_exc()
+        return cors_response(500, json.dumps({"error": str(e)}))
+
+
+def handle_do_parse_azure(event):
+    """Async worker: read xlsx from S3, send to Claude, save result."""
+    try:
+        body = json.loads(event.get("body", "{}"))
+        job_id = body["job_id"]
+
+        meta = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/meta.json")["Body"].read())
+        xlsx_key = meta["xlsx_key"]
+        customer_name_override = meta.get("customer_name", "")
+
+        xlsx_bytes = s3.get_object(Bucket=S3_BUCKET, Key=xlsx_key)["Body"].read()
+        wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes), data_only=True)
+        ws = wb.active
+
+        rows_text = []
+        for row in ws.iter_rows(values_only=True):
+            if any(v is not None for v in row):
+                rows_text.append("\t".join(str(v) if v is not None else "" for v in row[:7]))
+        text = "\n".join(rows_text)
+
+        response = bedrock.invoke_model(
+            modelId=MODEL_ID,
+            body=json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 8000,
+                "system": AZURE_PARSE_PROMPT,
+                "messages": [{"role": "user", "content": text}],
+            }),
+            contentType="application/json",
+            accept="application/json",
+        )
+        raw = json.loads(response["body"].read())["content"][0]["text"].strip()
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+        parsed = json.loads(raw)
+
+        for g in parsed.get("groups", []):
+            g["total"] = sum(s.get("cost", 0) for s in g.get("services", []))
+        if customer_name_override:
+            parsed["customer_name"] = customer_name_override
+
+        # Save result and mark done
+        s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/result.json",
+            Body=json.dumps(parsed).encode(), ContentType="application/json")
+        s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/meta.json",
+            Body=json.dumps({**meta, "status": "done"}).encode(), ContentType="application/json")
+
+    except Exception as e:
+        traceback.print_exc()
+        try:
+            meta = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/meta.json")["Body"].read())
+            s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/meta.json",
+                Body=json.dumps({**meta, "status": "error", "error": str(e)}).encode(),
+                ContentType="application/json")
+        except Exception:
+            pass
+    return cors_response(200, "")
+
+
+# ── /api/generate-azure ───────────────────────────────────────────────────────
+def handle_generate_azure(event):
+    try:
+        body = json.loads(event.get("body", "{}"))
+        groups = body.get("groups", [])
+        customer_name = body.get("customer_name", "Customer")
+        usd_rate = float(body.get("usd_rate", 4.4))
+        currency = body.get("currency", "MYR")
+
+        if not groups:
+            return cors_response(400, json.dumps({"error": "No groups provided"}))
+
+        job_id = uuid.uuid4().hex
+        total_monthly = sum(g["total"] for g in groups)
+        total_local = total_monthly * usd_rate
+        tax = total_local * 0.08
+
+        chunks = [{"group_name": g["name"], "chunk_data": g, "is_nested": False, "sub_name": None} for g in groups]
+        group_names = [g["name"] for g in groups]
+
+        s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/meta.json",
+            Body=json.dumps({
+                "cloud": "azure",
+                "customer_name": customer_name,
+                "groups": group_names,
+                "chunks": chunks,
+                "total_chunks": len(chunks),
+                "usd_rate": usd_rate,
+                "currency": currency,
+                "total_monthly": f"{total_monthly:,.2f}",
+                "total_local": f"{total_local:,.2f}",
+                "tax": f"{tax:,.2f}",
+                "total_with_tax": f"{total_local + tax:,.2f}",
+            }).encode(), ContentType="application/json")
+
+        fn_name = os.environ.get("WORKER_FUNCTION", "pricing-table-generator")
+        for i in range(len(chunks)):
+            lam.invoke(FunctionName=fn_name, InvocationType="Event",
+                Payload=json.dumps({"path": "/__process-azure", "httpMethod": "POST",
+                    "body": json.dumps({"job_id": job_id, "chunk_index": i})}).encode())
+
+        return cors_response(200, json.dumps({
+            "job_id": job_id, "customer_name": customer_name,
+            "total_groups": len(groups), "total_chunks": len(chunks),
+            "groups": group_names, "status": "processing",
+        }))
+    except Exception as e:
+        traceback.print_exc()
+        return cors_response(500, json.dumps({"error": str(e)}))
+
+
+# ── /__process-azure ──────────────────────────────────────────────────────────
+
+def handle_process_azure(event):
+    job_id = None
+    chunk_index = 0
+    try:
+        body = json.loads(event.get("body", "{}"))
+        job_id = body["job_id"]
+        chunk_index = body["chunk_index"]
+
+        meta = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/meta.json")["Body"].read())
+        chunk = meta["chunks"][chunk_index]
+        group = chunk["chunk_data"]
+        group_name = chunk["group_name"]
+
+        services = group.get("services", [])
+        svc_total = group.get("total", 0)
+        user_msg = f"""Group: {group_name}
+Total: USD {svc_total:,.2f}
+Services:
+{json.dumps(services, indent=2)}"""
+
+        response = bedrock.invoke_model(
+            modelId=MODEL_ID,
+            body=json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 4000,
+                "system": AZURE_GROUP_PROMPT,
+                "messages": [{"role": "user", "content": user_msg}],
+            }),
+            contentType="application/json", accept="application/json",
+        )
+        partial_html = json.loads(response["body"].read())["content"][0]["text"].strip()
+        partial_html = re.sub(r"^```html?\s*", "", partial_html)
+        partial_html = re.sub(r"\s*```$", "", partial_html)
+
+        s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/chunk_{chunk_index}.json",
+            Body=json.dumps({"partial_html": partial_html, "group_name": group_name, "sub_name": None}).encode(),
+            ContentType="application/json")
+
+    except Exception as e:
+        traceback.print_exc()
+        if job_id is not None:
+            try:
+                s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/chunk_{chunk_index}.json",
+                    Body=json.dumps({"error": str(e)}).encode(), ContentType="application/json")
+            except Exception:
+                pass
+    return cors_response(200, "")
+
+
+# ── Azure HTML assembly ───────────────────────────────────────────────────────
+
+def assemble_azure_html(meta, groups, chunks, done_chunks):
+    currency = meta.get("currency", "MYR")
+    tax_pct = "9% GST" if currency == "SGD" else "8% SST"
+    rows_html = []
+    for row_num, gname in enumerate(groups, 1):
+        chunk_indices = [i for i, c in enumerate(chunks) if c["group_name"] == gname]
+        inner = "\n".join(done_chunks[i].get("partial_html", "") for i in chunk_indices if i in done_chunks)
+        gtotal = sum(c["chunk_data"].get("total", 0) for c in chunks if c["group_name"] == gname)
+        rows_html.append(
+            f'  <tr>\n    <td class="no-cell">{row_num}.</td>\n'
+            f'    <td class="desc-cell">\n<b>{gname}</b><br>\n<br>\n{inner}\n    </td>\n'
+            f'    <td class="cost-cell">USD {gtotal:,.2f}</td>\n  </tr>'
+        )
+    html = AZURE_HTML_WRAPPER.format(
+        customer_name=meta["customer_name"],
+        rows="\n".join(rows_html),
+        total_monthly=meta["total_monthly"],
+    )
+    html = html.replace("__CURRENCY__", currency)
+    html = html.replace("__RATE__", str(meta["usd_rate"]))
+    html = html.replace("__LOCAL__", meta["total_local"])
+    html = html.replace("__TAX_PCT__", tax_pct)
+    html = html.replace("__TAX__", meta["tax"])
+    html = html.replace("__TOTAL__", meta["total_with_tax"])
+    return cors_response(200, json.dumps({
+        "status": "done", "html": html,
+        "customer_name": meta["customer_name"],
+        "total_monthly": meta["total_monthly"],
+    }))
+
+
 # ── CORS ──────────────────────────────────────────────────────────────────────
+
 
 def cors_response(status, body):
     return {

@@ -1,0 +1,12 @@
+{
+  "name": "Changelog Reminder",
+  "version": "1.0.0",
+  "description": "After agent completes work, checks if CHANGELOG.md needs a new entry",
+  "when": {
+    "type": "agentStop"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Check if any meaningful changes were made during this session (code changes to lambda_function.py, frontend files, deploy.sh, template.yaml, or .kiro config). If yes, update CHANGELOG.md with a new version entry. Follow the versioning rules in .kiro/steering/changelog.md."
+  }
+}
