@@ -1,4 +1,4 @@
-# Changelog — Pricing Table Generator
+# Changelog — Cloud Pricing Table Converter
 
 ## v3.0 — 2026-07-01
 **GCP + Azure tab support, major parser overhaul, UI polish**
@@ -41,9 +41,9 @@
 - Updated `README.md` — added git identity setup instructions and AWS_PROFILE usage note
 
 ## v2.0 — 2026-06-08
-**AWS-deployed web app (aws-deployed branch)**
-- New branch `aws-deployed` — fully hosted on AWS (CloudFront + Lambda + API Gateway + S3)
-- Single S3 bucket (`pricing-table-gen-{account_id}`) with prefixes: `frontend/`, `lambda/`, `uploads/`, `jobs/`
+**AWS-deployed web app (web-app branch)**
+- New branch `web-app` — fully hosted on AWS (CloudFront + Lambda + API Gateway + S3)
+- Single S3 bucket per deployment with prefixes: `frontend/`, `lambda/`, `uploads/`, `jobs/`
 - Frontend: SA Agent–style UI with estimate preview (collapsible groups + services), SA Agent–style pricing tab
 - Claude Sonnet 4.6 via Bedrock generates the proposal table
 - Per-group chunking (max 10 services/call) to avoid API Gateway 29s timeout

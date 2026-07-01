@@ -2,7 +2,7 @@
 inclusion: always
 ---
 
-# Changelog Rules — Pricing Table Generator
+# Changelog Rules — Cloud Pricing Table Converter
 
 ## File
 `CHANGELOG.md` at the repo root.

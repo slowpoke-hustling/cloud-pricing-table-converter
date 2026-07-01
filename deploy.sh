@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pricing Table Generator — Deploy (single S3 bucket)
+# Cloud Pricing Table Converter — Deploy (single S3 bucket)
 # The bucket is managed outside CloudFormation to avoid chicken-and-egg
 # with Lambda requiring the zip to exist before stack creation.
 set -e
