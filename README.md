@@ -1,4 +1,4 @@
-# Pricing Table Generator
+# Cloud Pricing Table Converter
 
 Generate copy-paste-ready proposal tables from AWS, GCP, and Azure pricing calculator exports in seconds.
 
@@ -22,7 +22,7 @@ Please set up the Pricing Table Generator tool on my machine. Do the following s
 
 1. Check if git is installed by running `git --version`. If it's not installed, install it using Homebrew (`brew install git`) on Mac or by running `winget install Git.Git` on Windows.
 2. Check if uv/uvx is installed by running `uvx --version`. If it's not installed, install it by running `pip install uv`. If pip is also not available, install it via `curl -LsSf https://astral.sh/uv/install.sh | sh` on Mac or `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"` on Windows.
-3. Clone the repo: `git clone git@github.com:slowpoke-hustling/pricing-table-generator.git`
+3. Clone the repo: `git clone git@github.com:slowpoke-hustling/cloud-pricing-table-converter.git`
 4. Open the cloned folder in the current workspace.
 5. Verify the AWS Pricing MCP server works by calling the get_pricing_service_codes tool. If it fails, tell me what went wrong.
 
