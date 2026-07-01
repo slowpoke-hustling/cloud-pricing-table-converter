@@ -1,5 +1,18 @@
 # Changelog — Cloud Pricing Table Converter
 
+## v3.1 — 2026-07-01
+**Post-release cleanup, repo rename, Azure polish**
+- Azure: zero-value specs skipped in descriptions (e.g. "0 managed disks" no longer shown)
+- Azure: async parse uses polling pattern — no more API Gateway timeout on large xlsx files
+- Lambda memory increased to 1024MB for faster processing
+- Code cleanup: removed dead `awsGroupList`, orphaned CSS block, duplicate GCP listeners
+- All inline `import` statements moved to top of `lambda_function.py`
+- `*.xlsx` added to `.gitignore` on web-app branch
+- Pre-push checklist hook added to workspace
+- Repo renamed: `pricing-table-generator` → `cloud-pricing-table-converter`
+- Branch renamed: `aws-deployed` → `web-app`
+- README updated on both branches — all three providers documented
+
 ## v3.0 — 2026-07-01
 **GCP + Azure tab support, major parser overhaul, UI polish**
 
