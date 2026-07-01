@@ -54,7 +54,7 @@ git config user.email "yourusername@users.noreply.github.com"
 ## Project structure
 
 ```
-pricing-table-generator/
+cloud-pricing-table-converter/
 ├── frontend/web/      HTML + CSS + JS (SA Agent style UI)
 ├── backend/           Lambda function (Python, Claude Sonnet 4.6)
 ├── template.yaml      CloudFormation (Lambda + API GW + S3 + CloudFront)
