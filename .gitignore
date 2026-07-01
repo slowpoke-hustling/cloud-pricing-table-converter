@@ -12,6 +12,9 @@ __pycache__/
 .venv/
 venv/
 
+# Customer/sample data files
+*.xlsx
+
 # Kiro local settings (contains personal MCP config)
 .kiro/settings/
 

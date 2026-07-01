@@ -171,7 +171,6 @@ function awsRenderPreview(data, groupStatuses) {
             }
             return { name: clean, rawName: gname, total, services, index: i };
         });
-    awsGroupList = groups;
 
     let html = `<div style="margin-bottom:16px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;">
   <div style="font-size:14px;font-weight:700;">${esc(customer)}</div>
