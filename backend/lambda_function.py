@@ -612,24 +612,21 @@ def handle_status(event):
                         get_path_number(path_tup[:depth])
 
                 # Render headings + services.
-                # Use <p style="margin-top:6pt"> for headings so Google Docs
-                # preserves the spacing above each heading when pasting.
+                # Pattern that works (same as Claude's between-service spacing):
+                #   <heading line><br>
+                #   <br>                   ← blank line after heading
+                #   <services>
+                #
+                # Between sections: services already end with a trailing <br> from Claude,
+                # so we just need a blank <br> before the next heading.
                 inner_lines = []
                 emitted_prefixes = set()
-                prev_depth1 = None
 
                 for path_tup, html_content in path_sections:
                     if not path_tup:
                         inner_lines.append(html_content)
                         continue
 
-                    # When top-level section changes, add a spacer line before
-                    current_depth1 = path_tup[0] if path_tup else None
-                    if inner_lines and current_depth1 != prev_depth1:
-                        inner_lines.append(" <br>")
-                    prev_depth1 = current_depth1
-
-                    new_headings = []
                     for depth in range(1, len(path_tup) + 1):
                         prefix = path_tup[:depth]
                         if prefix not in emitted_prefixes:
@@ -637,12 +634,12 @@ def handle_status(event):
                             label = prefix[-1]
                             num = path_numbers.get(prefix, "")
                             indent = "&nbsp;" * (4 * (depth - 1))
-                            new_headings.append((depth, f"{indent}<b>{num}. {label}</b>"))
-
-                    # Emit headings — each on its own <p> with margin-top for spacing
-                    for hi, (depth, heading_html) in enumerate(new_headings):
-                        margin = "6pt" if (inner_lines or hi > 0) else "0"
-                        inner_lines.append(f'<p style="margin:{margin} 0 2pt 0">{heading_html}</p>')
+                            # Blank line before every heading (same gap Claude puts between services)
+                            if inner_lines:
+                                inner_lines.append("<br>")
+                            # Heading + blank line after (same pattern as service name → props gap)
+                            inner_lines.append(f"{indent}<b>{num}. {label}</b><br>")
+                            inner_lines.append("<br>")
 
                     inner_lines.append(html_content)
 
