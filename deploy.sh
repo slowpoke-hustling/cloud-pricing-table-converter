@@ -25,8 +25,18 @@ rm -f /tmp/pricing_table_generator.zip
 # Install openpyxl into a temp dir for packaging
 LAMBDA_PKG_DIR=$(mktemp -d)
 pip3 install openpyxl --quiet --target "$LAMBDA_PKG_DIR" 2>/dev/null || python3 -m pip install openpyxl --quiet --target "$LAMBDA_PKG_DIR"
-cp "$SCRIPT_DIR/backend/lambda_function.py" "$LAMBDA_PKG_DIR/"
-cd "$LAMBDA_PKG_DIR" && zip -r /tmp/pricing_table_generator.zip . -q && cd "$SCRIPT_DIR"
+cp "$SCRIPT_DIR/backend/lambda_function.py" "$LAMBDA_PKG_DIR/lambda_function.py"
+# IMPORTANT: zip with paths relative to LAMBDA_PKG_DIR so lambda_function.py is at zip root
+python3 -c "
+import zipfile, os
+pkg = '$LAMBDA_PKG_DIR'
+with zipfile.ZipFile('/tmp/pricing_table_generator.zip', 'w', zipfile.ZIP_DEFLATED) as zf:
+    for root, dirs, files in os.walk(pkg):
+        for f in files:
+            fullpath = os.path.join(root, f)
+            arcname = os.path.relpath(fullpath, pkg)
+            zf.write(fullpath, arcname)
+"
 rm -rf "$LAMBDA_PKG_DIR"
 aws s3 cp /tmp/pricing_table_generator.zip "s3://$BUCKET/lambda/pricing_table_generator.zip" \
     --profile $PROFILE --region $REGION
