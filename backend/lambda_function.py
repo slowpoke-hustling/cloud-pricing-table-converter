@@ -611,14 +611,26 @@ def handle_status(event):
                     for depth in range(1, len(path_tup) + 1):
                         get_path_number(path_tup[:depth])
 
-                # Render — emit a bold heading for each new path prefix, then services
+                # Render headings + services.
+                # Strategy: emit all new headings for a section (parent first, then children),
+                # with a blank line between consecutive headings and after the last heading.
+                # A blank line also precedes each top-level (depth=1) heading change.
                 inner_lines = []
                 emitted_prefixes = set()
+                prev_depth1 = None   # track when the top-level section changes
 
                 for path_tup, html_content in path_sections:
                     if not path_tup:
                         inner_lines.append(html_content)
                         continue
+
+                    # Blank line before the section when top-level group changes
+                    current_depth1 = path_tup[0] if path_tup else None
+                    if inner_lines and current_depth1 != prev_depth1:
+                        inner_lines.append("&nbsp;<br>")
+                    prev_depth1 = current_depth1
+
+                    new_headings = []
                     for depth in range(1, len(path_tup) + 1):
                         prefix = path_tup[:depth]
                         if prefix not in emitted_prefixes:
@@ -626,11 +638,18 @@ def handle_status(event):
                             label = prefix[-1]
                             num = path_numbers.get(prefix, "")
                             indent = "&nbsp;" * (4 * (depth - 1))
-                            # Use <br><br> before every heading (except the very first)
-                            # to guarantee a visible blank line in Google Docs
-                            spacer = "<br><br>" if inner_lines else ""
-                            inner_lines.append(f"{spacer}{indent}<b>{num}. {label}</b><br>")
-                    inner_lines.append("<br>")
+                            new_headings.append(f"{indent}<b>{num}. {label}</b><br>")
+
+                    # Emit headings with a blank line between each one
+                    for hi, heading in enumerate(new_headings):
+                        if hi > 0:
+                            inner_lines.append("&nbsp;<br>")   # non-breaking space forces a real visible line
+                        inner_lines.append(heading)
+
+                    # Blank line after the last heading, before services
+                    if new_headings:
+                        inner_lines.append("&nbsp;<br>")
+
                     inner_lines.append(html_content)
                     inner_lines.append("<br>")
                     inner_lines.append(html_content)
