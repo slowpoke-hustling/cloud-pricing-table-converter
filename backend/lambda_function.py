@@ -612,21 +612,20 @@ def handle_status(event):
                         get_path_number(path_tup[:depth])
 
                 # Render headings + services.
-                # Pattern that works (same as Claude's between-service spacing):
-                #   <heading line><br>
-                #   <br>                   ← blank line after heading
-                #   <services>
-                #
-                # Between sections: services already end with a trailing <br> from Claude,
-                # so we just need a blank <br> before the next heading.
-                inner_lines = []
+                # Use the same pattern that worked in v3.1:
+                #   each section = heading<br>\n<br>\n + services
+                #   sections joined with \n<br>\n  (blank line between sections)
+                # For multi-level paths, ancestor headings are stacked before the services.
+                section_blocks = []
                 emitted_prefixes = set()
 
                 for path_tup, html_content in path_sections:
                     if not path_tup:
-                        inner_lines.append(html_content)
+                        section_blocks.append(html_content)
                         continue
 
+                    # Build heading stack for new prefixes (shallowest first)
+                    heading_lines = []
                     for depth in range(1, len(path_tup) + 1):
                         prefix = path_tup[:depth]
                         if prefix not in emitted_prefixes:
@@ -634,16 +633,14 @@ def handle_status(event):
                             label = prefix[-1]
                             num = path_numbers.get(prefix, "")
                             indent = "&nbsp;" * (4 * (depth - 1))
-                            # Blank line before every heading (same gap Claude puts between services)
-                            if inner_lines:
-                                inner_lines.append("<br>")
-                            # Heading + blank line after (same pattern as service name → props gap)
-                            inner_lines.append(f"{indent}<b>{num}. {label}</b><br>")
-                            inner_lines.append("<br>")
+                            heading_lines.append(f"{indent}<b>{num}. {label}</b><br>")
 
-                    inner_lines.append(html_content)
+                    # Join heading stack with blank line between each level,
+                    # then blank line before services — same as v3.1 pattern
+                    heading_block = "\n<br>\n".join(heading_lines)
+                    section_blocks.append(f"{heading_block}\n<br>\n{html_content}")
 
-                inner = "\n".join(inner_lines)
+                inner = "\n<br>\n".join(section_blocks)
                 rows_html.append(f'  <tr>\n    <td class="no-cell">{row_num}.</td>\n    <td class="desc-cell">\n<b>{clean_name}</b><br>\n<br>\n{inner}\n    </td>\n    <td class="cost-cell">USD {gtotal:,.2f}</td>\n  </tr>')
 
         html = HTML_WRAPPER.format(
