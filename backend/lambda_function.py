@@ -626,6 +626,9 @@ def handle_status(event):
                             label = prefix[-1]
                             num = path_numbers.get(prefix, "")
                             indent = "&nbsp;" * (4 * (depth - 1))
+                            # blank line before every heading except the very first
+                            if inner_lines:
+                                inner_lines.append("<br>")
                             inner_lines.append(f"{indent}<b>{num}. {label}</b><br>")
                     inner_lines.append("<br>")
                     inner_lines.append(html_content)
