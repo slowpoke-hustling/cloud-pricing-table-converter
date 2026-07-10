@@ -15,6 +15,7 @@ import traceback
 import base64
 import io
 import openpyxl
+from collections import OrderedDict
 from datetime import datetime
 
 REGION = "us-east-1"
@@ -109,45 +110,55 @@ def enrich_services_with_specs(services):
                 props["Memory"] = memory
     return services
 
-def split_group_into_chunks(group_name, group_data):
-    """Split a group into chunks of MAX_SERVICES_PER_CHUNK services each."""
-    chunks = []
+def collect_services_recursive(node, path=()):
+    """
+    Recursively walk a group node at any nesting depth and return a flat list of
+    (path_tuple, service_dict) pairs.  path_tuple contains all sub-key names
+    from the group root down to (but not including) the Services array.
+    Stops recursing when it reaches a node that has a 'Services' list.
+    """
+    if isinstance(node, list):
+        return [(path, s) for s in node]
+    if isinstance(node, dict):
+        if "Services" in node and isinstance(node["Services"], list):
+            return [(path, s) for s in node["Services"]]
+        results = []
+        for key, val in node.items():
+            results.extend(collect_services_recursive(val, path + (key,)))
+        return results
+    return []
 
-    if "Services" in group_data:
-        # Flat group — chunk the services list
-        services = group_data["Services"]
+
+def split_group_into_chunks(group_name, group_data):
+    """
+    Split a group into chunks of MAX_SERVICES_PER_CHUNK services each.
+    Handles any nesting depth — sub_name is now a tuple representing the
+    full path from group root to the Services node (e.g. ('GroupA', 'SubGroup')).
+    """
+    if isinstance(group_data, list):
+        flat = [((), s) for s in group_data]
+    else:
+        flat = collect_services_recursive(group_data)
+
+    is_nested = any(len(path) > 0 for path, _ in flat)
+
+    # Bucket services by their full path tuple
+    sub_buckets = OrderedDict()
+    for path, svc in flat:
+        if path not in sub_buckets:
+            sub_buckets[path] = []
+        sub_buckets[path].append(svc)
+
+    chunks = []
+    for path_key, services in sub_buckets.items():
+        # sub_name: JSON-encode the path tuple so it survives S3 round-trip
+        sub_name = json.dumps(list(path_key)) if path_key else None
         for i in range(0, len(services), MAX_SERVICES_PER_CHUNK):
-            chunk_svcs = services[i:i + MAX_SERVICES_PER_CHUNK]
             chunks.append({
                 "group_name": group_name,
-                "chunk_data": {"Services": chunk_svcs},
-                "is_nested": False,
-                "sub_name": None,
-            })
-    elif isinstance(group_data, dict):
-        # Nested group — chunk within each sub-group
-        for sub_name, sub_data in group_data.items():
-            if not isinstance(sub_data, dict):
-                continue
-            services = sub_data.get("Services", [])
-            for i in range(0, len(services), MAX_SERVICES_PER_CHUNK):
-                chunk_svcs = services[i:i + MAX_SERVICES_PER_CHUNK]
-                chunks.append({
-                    "group_name": group_name,
-                    "chunk_data": {"Services": chunk_svcs},
-                    "is_nested": True,
-                    "sub_name": sub_name,
-                })
-    elif isinstance(group_data, list):
-        # Some exports use a list of services directly
-        services = group_data
-        for i in range(0, len(services), MAX_SERVICES_PER_CHUNK):
-            chunk_svcs = services[i:i + MAX_SERVICES_PER_CHUNK]
-            chunks.append({
-                "group_name": group_name,
-                "chunk_data": {"Services": chunk_svcs},
-                "is_nested": False,
-                "sub_name": None,
+                "chunk_data": {"Services": services[i:i + MAX_SERVICES_PER_CHUNK]},
+                "is_nested": is_nested,
+                "sub_name": sub_name,
             })
 
     return chunks if chunks else [{"group_name": group_name, "chunk_data": group_data, "is_nested": False, "sub_name": None}]
@@ -551,26 +562,75 @@ def handle_status(event):
             parts = ginfo["parts"]
             clean_name = re.sub(r"^Original Grouping\s*>\s*", "", gname).strip()
 
-            # Calculate group total from input
+            # Calculate group total from input using recursive collector
             gdata = inp["data"]["Groups"].get(gname, {})
             if isinstance(gdata, list):
                 gdata = {"Services": gdata}
-            if "Services" in gdata:
-                gtotal = sum(float(s["Service Cost"]["monthly"]) for s in gdata["Services"])
-            else:
-                gtotal = sum(float(s["Service Cost"]["monthly"]) for sd in gdata.values() if isinstance(sd, dict) for s in sd.get("Services", []))
+            gtotal = sum(
+                float(s["Service Cost"]["monthly"])
+                for _, s in collect_services_recursive(gdata)
+            )
 
             if not is_nested:
-                # Flat group — join all partial htmls
+                # Flat group — no sub-headings, services listed directly
                 inner = "\n".join(parts.get("__flat__", []))
                 rows_html.append(f'  <tr>\n    <td class="no-cell">{row_num}.</td>\n    <td class="desc-cell">\n<b>{clean_name}</b><br>\n<br>\n{inner}\n    </td>\n    <td class="cost-cell">USD {gtotal:,.2f}</td>\n  </tr>')
             else:
-                # Nested group — wrap sub-groups with numbered headings
-                inner_parts = []
-                for sub_num, (sub_name, sub_parts) in enumerate(parts.items(), 1):
-                    clean_sub = re.sub(r"^Original Grouping\s*>\s*", "", sub_name).strip()
-                    inner_parts.append(f"<b>{sub_num}. {clean_sub}</b><br>\n<br>\n" + "\n".join(sub_parts))
-                inner = "\n<br>\n".join(inner_parts)
+                # Nested group — render hierarchical headings from path tuples.
+                # parts keys are JSON-encoded path lists e.g. '["GroupA","SubGroup"]'
+
+                # Decode path tuples and pair with html content
+                path_sections = []
+                for raw_key, sub_parts in parts.items():
+                    if raw_key == "__flat__":
+                        path_tup = ()
+                    else:
+                        try:
+                            path_tup = tuple(json.loads(raw_key))
+                        except Exception:
+                            path_tup = (raw_key,)
+                    path_sections.append((path_tup, "\n".join(sub_parts)))
+
+                # Assign dot-numbers to every unique path prefix in order
+                prefix_counters = {}   # parent_path -> current child counter
+                path_numbers = {}      # path_tuple -> dot-number string
+
+                def get_path_number(path):
+                    if path in path_numbers:
+                        return path_numbers[path]
+                    parent = path[:-1]
+                    if parent not in prefix_counters:
+                        prefix_counters[parent] = 0
+                    prefix_counters[parent] += 1
+                    num = prefix_counters[parent]
+                    parent_num = path_numbers.get(parent, "")
+                    path_numbers[path] = f"{parent_num}.{num}" if parent_num else str(num)
+                    return path_numbers[path]
+
+                for path_tup, _ in path_sections:
+                    for depth in range(1, len(path_tup) + 1):
+                        get_path_number(path_tup[:depth])
+
+                # Render — emit a bold heading for each new path prefix, then services
+                inner_lines = []
+                emitted_prefixes = set()
+
+                for path_tup, html_content in path_sections:
+                    if not path_tup:
+                        inner_lines.append(html_content)
+                        continue
+                    for depth in range(1, len(path_tup) + 1):
+                        prefix = path_tup[:depth]
+                        if prefix not in emitted_prefixes:
+                            emitted_prefixes.add(prefix)
+                            label = prefix[-1]
+                            num = path_numbers.get(prefix, "")
+                            indent = "&nbsp;" * (4 * (depth - 1))
+                            inner_lines.append(f"{indent}<b>{num}. {label}</b><br>")
+                    inner_lines.append("<br>")
+                    inner_lines.append(html_content)
+
+                inner = "\n".join(inner_lines)
                 rows_html.append(f'  <tr>\n    <td class="no-cell">{row_num}.</td>\n    <td class="desc-cell">\n<b>{clean_name}</b><br>\n<br>\n{inner}\n    </td>\n    <td class="cost-cell">USD {gtotal:,.2f}</td>\n  </tr>')
 
         html = HTML_WRAPPER.format(

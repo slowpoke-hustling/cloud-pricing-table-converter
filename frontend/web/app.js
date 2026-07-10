@@ -150,6 +150,29 @@ function awsClearFile() {
 }
 
 
+// Recursively collect all services from a group node at any nesting depth.
+// Returns [{...svc, _path: ['GroupA','SubGroup']}, ...] where _path is the
+// full tuple of sub-group keys from group root down to the Services node.
+// Services at the group root have _path = [].
+function awsCollectServices(node, path) {
+    path = path || [];
+    const out = [];
+    if (Array.isArray(node)) {
+        node.forEach(s => out.push({ ...s, _path: path }));
+        return out;
+    }
+    if (node && typeof node === 'object') {
+        if (Array.isArray(node.Services)) {
+            node.Services.forEach(s => out.push({ ...s, _path: path }));
+            return out;
+        }
+        Object.entries(node).forEach(([key, val]) => {
+            out.push(...awsCollectServices(val, path.concat(key)));
+        });
+    }
+    return out;
+}
+
 function awsRenderPreview(data, groupStatuses) {
     const customer = data.Name || 'Unknown';
     const totalMonthly = parseFloat(data['Total Cost']?.monthly || 0);
@@ -159,16 +182,8 @@ function awsRenderPreview(data, groupStatuses) {
         .filter(([n]) => !n.includes('To put in RFP'))
         .map(([gname, gdata], i) => {
             const clean = gname.replace(/^Original Grouping\s*>\s*/, '').trim();
-            let total = 0, services = [];
-            if (Array.isArray(gdata)) gdata = { Services: gdata };
-            if (gdata.Services) {
-                gdata.Services.forEach(s => { total += parseFloat(s['Service Cost'].monthly); services.push(s); });
-            } else {
-                Object.entries(gdata).forEach(([subName, sd]) => {
-                    if (Array.isArray(sd)) sd.forEach(s => { total += parseFloat(s['Service Cost']?.monthly || 0); services.push({...s, _sub: subName}); });
-                    else if (sd?.Services) sd.Services.forEach(s => { total += parseFloat(s['Service Cost'].monthly); services.push({...s, _sub: subName}); });
-                });
-            }
+            const services = awsCollectServices(gdata);
+            const total = services.reduce((sum, s) => sum + parseFloat(s['Service Cost']?.monthly || 0), 0);
             return { name: clean, rawName: gname, total, services, index: i };
         });
 
@@ -197,20 +212,53 @@ function awsRenderPreview(data, groupStatuses) {
   </div>
   <div class="pricing-services">`;
 
-        const subGroups = []; const subGroupMap = {};
+        // Group services by their _path for hierarchical heading display in preview
+        // Build an ordered list of (pathKey, services[]) preserving insertion order
+        const pathSections = [];
+        const pathMap = {};
         g.services.forEach(svc => {
-            const key = svc._sub || '__none__';
-            if (!subGroupMap[key]) { subGroupMap[key] = []; subGroups.push({ sub: svc._sub||null, services: subGroupMap[key] }); }
-            subGroupMap[key].push(svc);
+            const key = JSON.stringify(svc._path || []);
+            if (!pathMap[key]) { pathMap[key] = []; pathSections.push({ path: svc._path || [], services: pathMap[key] }); }
+            pathMap[key].push(svc);
         });
-        subGroups.forEach(({ sub, services: svcs }) => {
-            if (sub) html += `<div class="pricing-subgroup-header">${esc(sub)}</div>`;
+
+        // Assign dot-numbers to every unique path prefix
+        const prefixCounters = {};
+        const pathNumbers = {};
+        function getPathNumber(path) {
+            const k = JSON.stringify(path);
+            if (pathNumbers[k]) return pathNumbers[k];
+            const parentKey = JSON.stringify(path.slice(0,-1));
+            prefixCounters[parentKey] = (prefixCounters[parentKey] || 0) + 1;
+            const n = prefixCounters[parentKey];
+            const parentNum = pathNumbers[parentKey] || '';
+            pathNumbers[k] = parentNum ? `${parentNum}.${n}` : String(n);
+            return pathNumbers[k];
+        }
+        pathSections.forEach(({ path }) => {
+            for (let d = 1; d <= path.length; d++) getPathNumber(path.slice(0, d));
+        });
+
+        const emittedPrefixes = new Set();
+        pathSections.forEach(({ path, services: svcs }) => {
+            // Emit headings for any new path prefix
+            for (let d = 1; d <= path.length; d++) {
+                const prefix = path.slice(0, d);
+                const pk = JSON.stringify(prefix);
+                if (!emittedPrefixes.has(pk)) {
+                    emittedPrefixes.add(pk);
+                    const num = pathNumbers[pk] || '';
+                    const indent = '\u00a0'.repeat(4 * (d - 1));
+                    html += `<div class="pricing-subgroup-header" style="padding-left:${(d-1)*12}px">${indent}<b>${num}. ${esc(prefix[d-1])}</b></div>`;
+                }
+            }
             svcs.forEach(svc => {
                 const monthly = parseFloat(svc['Service Cost']?.monthly || 0);
                 const props = Object.entries(svc.Properties || {});
                 const id = Math.random().toString(36).substr(2,6);
                 const label = svc.Description ? `${esc((svc['Service Name']||'').trim())} — <em>${esc(svc.Description)}</em>` : esc((svc['Service Name']||'').trim());
-                html += `<div class="pricing-service" onclick="var p=document.getElementById('p-${id}');p.style.display=p.style.display==='block'?'none':'block'">
+                const indent = path.length > 0 ? `padding-left:${path.length * 12}px` : '';
+                html += `<div class="pricing-service" style="${indent}" onclick="var p=document.getElementById('p-${id}');p.style.display=p.style.display==='block'?'none':'block'">
     <span style="display:flex;align-items:center;gap:5px;"><span class="svc-chevron">▾</span>${label}</span>
     <span>${monthly.toFixed(2)}</span></div>`;
                 if (props.length) {

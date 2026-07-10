@@ -1,5 +1,15 @@
 # Changelog — Cloud Pricing Table Converter
 
+## v3.2 — 2026-07-10
+**Fix: recursive group parsing + hierarchical sub-group numbering**
+
+- Bug fix: groups with 3+ levels of nesting (e.g. `Groups → Workloads → GroupA → SubGroup → Services`) were silently dropped — only 2 levels were traversed
+- `collect_services_recursive()` (backend) and `awsCollectServices()` (frontend) now carry the **full path tuple** at any nesting depth, stopping only when they reach a `Services` array
+- `split_group_into_chunks()` encodes path tuples as JSON so they survive the S3 round-trip
+- Assembly in `handle_status` renders hierarchical headings from path tuples: `1.`, `1.1`, `1.1.1` etc. — services remain unnumbered
+- Preview in `awsRenderPreview` mirrors the same structure with indented sub-group headers and service rows
+- `OrderedDict` import moved from inline-in-function to top-level imports
+
 ## v3.1 — 2026-07-01
 **Post-release cleanup, repo rename, Azure polish**
 - Azure: zero-value specs skipped in descriptions (e.g. "0 managed disks" no longer shown)
