@@ -51,8 +51,9 @@ Browser → API Gateway → Lambda → Claude Sonnet 4.6 (Bedrock)
 Requires AWS CLI with a named profile and Claude Sonnet 4.6 enabled in `us-east-1`.
 
 ```bash
-# Set your AWS profile
-AWS_PROFILE=your-profile ./deploy.sh
+cd infra
+chmod +x deploy.sh
+./deploy.sh
 ```
 
 **First time setup — set git identity so your real name isn't exposed:**
@@ -67,10 +68,11 @@ git config user.email "yourusername@users.noreply.github.com"
 
 ```
 cloud-pricing-table-converter/
-├── frontend/web/      HTML + CSS + JS (browser UI)
+├── frontend/src/      HTML + CSS + JS (browser UI)
 ├── backend/           Lambda function (Python, Claude Sonnet 4.6)
-├── template.yaml      CloudFormation (Lambda + API GW + S3 + CloudFront)
-├── deploy.sh          One-command deploy
+├── infra/
+│   ├── template.yaml  CloudFormation (Lambda + API GW + S3 + CloudFront)
+│   └── deploy.sh      One-command deploy
 └── CHANGELOG.md
 ```
 

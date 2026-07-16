@@ -25,7 +25,7 @@ rm -f /tmp/pricing_table_generator.zip
 # Install openpyxl into a temp dir for packaging
 LAMBDA_PKG_DIR=$(mktemp -d)
 pip3 install openpyxl --quiet --target "$LAMBDA_PKG_DIR" 2>/dev/null || python3 -m pip install openpyxl --quiet --target "$LAMBDA_PKG_DIR"
-cp "$SCRIPT_DIR/backend/lambda_function.py" "$LAMBDA_PKG_DIR/lambda_function.py"
+cp "$SCRIPT_DIR/../backend/lambda_function.py" "$LAMBDA_PKG_DIR/lambda_function.py"
 # IMPORTANT: zip with paths relative to LAMBDA_PKG_DIR so lambda_function.py is at zip root
 python3 -c "
 import zipfile, os
@@ -85,13 +85,13 @@ CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
 echo "[5/5] Deploying frontend..."
 DEPLOY_TS=$(date +%s)
 sed "s|const API_URL = ''|const API_URL = '${API_URL}'|" \
-    "$SCRIPT_DIR/frontend/web/app.js" > /tmp/app.js.deploy
+    "$SCRIPT_DIR/../frontend/src/app.js" > /tmp/app.js.deploy
 # Inject deploy timestamp into index.html for cache busting
 sed "s|__DEPLOY_TS__|${DEPLOY_TS}|g" \
-    "$SCRIPT_DIR/frontend/web/index.html" > /tmp/index.html.deploy
-aws s3 sync "$SCRIPT_DIR/frontend/web/" "s3://$BUCKET/frontend/" \
+    "$SCRIPT_DIR/../frontend/src/index.html" > /tmp/index.html.deploy
+aws s3 sync "$SCRIPT_DIR/../frontend/src/" "s3://$BUCKET/frontend/" \
     --profile $PROFILE --region $REGION --delete --exclude "app.js" --exclude "index.html" --exclude "style.css"
-aws s3 cp "$SCRIPT_DIR/frontend/web/style.css" "s3://$BUCKET/frontend/style.css" \
+aws s3 cp "$SCRIPT_DIR/../frontend/src/style.css" "s3://$BUCKET/frontend/style.css" \
     --profile $PROFILE --region $REGION --content-type "text/css" \
     --cache-control "no-cache, no-store, must-revalidate"
 aws s3 cp /tmp/index.html.deploy "s3://$BUCKET/frontend/index.html" \
