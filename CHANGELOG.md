@@ -1,5 +1,13 @@
 # Changelog — Cloud Pricing Table Converter
 
+## v3.3 — 2026-07-16
+**Refactor: standardize folder structure**
+- `frontend/web/` renamed to `frontend/src/` — consistent with sa-tools convention
+- `template.yaml` and `deploy.sh` moved into `infra/` subfolder
+- `deploy.sh` path references updated to use `$SCRIPT_DIR/..` for sibling folders
+- README updated to reflect new structure
+- No functional changes — AWS deployment unaffected
+
 ## v3.2 — 2026-07-10
 **Fix: recursive group parsing + hierarchical sub-group numbering**
 
