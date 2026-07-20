@@ -1,5 +1,30 @@
 # Changelog — Cloud Pricing Table Converter
 
+## v3.5 — 2026-07-20
+**Itemised table layout — one row per service with individual prices**
+
+- Table output changed from "one row per group with services packed in a cell" to itemised layout:
+  - Top-level group → shaded header row (`#0000ff`) with group total and row number
+  - Sub-group headings → 5-stop blue gradient by nesting depth (`#2260ff` → `#598eff` → `#8fb6ff` → `#c6dbff`), all white text
+  - Same depth = same colour (e.g. `ICT pricing` and `AWS pricing non-related` at depth 1 both get `#2260ff`)
+  - Each service → individual white row with name, formatted properties, and individual monthly cost; no indent
+- `collect_services_recursive` (backend) and `awsCollectServices` (frontend) fixed: was stopping when it hit a `Services` key, now collects flat services first then continues into sibling sub-groups — fixes year groups showing only top-level EC2s
+- Property formatting done in Python directly — no Claude workers dispatched, table ready instantly on first poll
+  - Skips: Tenancy, Region, zero/empty/not-selected fields, unit-only labels
+  - Converts decimal percentages (0.03 → 3%)
+  - Extracts `Number of instances` from Workload field
+  - Shortens pricing strategy names (e.g. `Amazon EC2 Instance Savings Plans 3yr No Upfront` → `EC2 Savings Plans 3yr No Upfront`)
+- `handle_generate` sets `total_chunks=0`, no Lambda workers invoked — assembly runs in `handle_status` synchronously
+- "After pasting into Google Docs" yellow advisory box removed from table output
+- Dead layout-toggle listener removed from `app.js` (toggle was reverted, listener remained)
+
+## v3.4 — 2026-07-20
+**Fix: sibling sub-groups silently dropped when top-level Services array present**
+
+- Bug: `collect_services_recursive()` stopped recursing as soon as it found a `"Services"` key in a dict — any sibling sub-group keys at the same level (e.g. `"AWS pricing non-related to inventory list"`, `"ICT pricing"`) were never visited and their services were lost
+- Fix: function now always collects the flat `"Services"` array first, then continues to recurse into every other sibling key — both are processed in a single pass
+- Affected JSON shape: groups that mix a root-level `Services` array with named sibling sub-groups (e.g. Y1/Y2 year groups with direct EC2 entries alongside separate sub-group sections)
+
 ## v3.3 — 2026-07-16
 **Refactor: standardize folder structure**
 - `frontend/web/` renamed to `frontend/src/` — consistent with sa-tools convention

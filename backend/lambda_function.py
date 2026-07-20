@@ -115,18 +115,117 @@ def collect_services_recursive(node, path=()):
     Recursively walk a group node at any nesting depth and return a flat list of
     (path_tuple, service_dict) pairs.  path_tuple contains all sub-key names
     from the group root down to (but not including) the Services array.
-    Stops recursing when it reaches a node that has a 'Services' list.
+
+    A node may have BOTH a top-level "Services" list AND sibling sub-group keys
+    (e.g. "AWS pricing non-related to inventory list", "ICT pricing").
+    We collect the flat Services first, then recurse into every non-Services sibling.
     """
     if isinstance(node, list):
         return [(path, s) for s in node]
     if isinstance(node, dict):
-        if "Services" in node and isinstance(node["Services"], list):
-            return [(path, s) for s in node["Services"]]
         results = []
+        # Collect any flat Services at this level first
+        if "Services" in node and isinstance(node["Services"], list):
+            results.extend((path, s) for s in node["Services"])
+        # Always recurse into non-Services sibling keys (sub-groups)
         for key, val in node.items():
+            if key == "Services":
+                continue
             results.extend(collect_services_recursive(val, path + (key,)))
         return results
     return []
+
+
+# ── Property formatting helpers for itemised layout ───────────────────────────
+
+# Fields to skip unconditionally
+_SKIP_FIELDS = {
+    "Tenancy", "Region",
+    "Management events units", "Data events units", "Network activity events units",
+    "Insight events units",
+}
+_SKIP_VALUE_PATTERNS = [
+    r"^0\s+",           # zero-quantity fields e.g. "0 TB per month"
+    r"Not selected",    # "DT Inbound: Not selected"
+    r"^\s*$",           # blank
+    r"^per\s+\w",       # unit-only placeholders e.g. "per month", "per hour"
+    r"^Days\s*$",       # empty retention period
+    r"^Weeks\s*$",
+]
+_DECIMAL_PCT_FIELDS = [
+    "Estimated annual increase", "Estimated daily change", "Mobile sampling rate",
+]
+_PRICING_STRATEGY_MAP = {
+    "Amazon EC2 Instance Savings Plans 3yr No Upfront": "EC2 Savings Plans 3yr No Upfront",
+    "Compute Savings Plans 3yr No Upfront": "Compute Savings Plans 3yr No Upfront",
+    "Compute Savings Plans 1yr No Upfront": "Compute Savings Plans 1yr No Upfront",
+    "Reserved 1yr No Upfront": "Reserved 1yr No Upfront",
+    "Reserved 3yr No Upfront": "Reserved 3yr No Upfront",
+    "OnDemand": "On Demand",
+}
+
+
+def _should_skip_field(key, value):
+    """Return True if this property field should be omitted from the output."""
+    if key in _SKIP_FIELDS:
+        return True
+    val_str = str(value).strip()
+    for pat in _SKIP_VALUE_PATTERNS:
+        if re.search(pat, val_str, re.IGNORECASE):
+            return True
+    return False
+
+
+def _format_value(key, value):
+    """Apply value transformations: percentage, pricing strategy shortening."""
+    val_str = str(value).strip()
+    # Decimal percentage fields
+    for pct_field in _DECIMAL_PCT_FIELDS:
+        if pct_field.lower() in key.lower():
+            try:
+                f = float(val_str)
+                return f"{f * 100:.0f}%"
+            except ValueError:
+                pass
+    # Pricing strategy
+    for long, short in _PRICING_STRATEGY_MAP.items():
+        if long.lower() in val_str.lower():
+            return short
+    return val_str
+
+
+# AWS Calculator max nesting is 5 levels — use 5 fixed blue stops, all white text
+_GRP_COLOURS = ["#0000ff", "#2260ff", "#598eff", "#8fb6ff", "#c6dbff"]
+
+def grp_heading_style(depth, max_depth=None):
+    """Return inline CSS for a group heading row at the given nesting depth (0-based)."""
+    bg = _GRP_COLOURS[min(depth, len(_GRP_COLOURS) - 1)]
+    return f"background-color:{bg};color:#fff;font-weight:bold;"
+
+
+def format_service_props_html(svc):
+    """
+    Format a single service's properties as HTML lines for the itemised table cell.
+    Returns an HTML string like:
+      - field: value<br>
+      - field: value<br>
+    Handles Workload → Number of instances extraction.
+    """
+    lines = []
+    props = svc.get("Properties", {})
+    for key, value in props.items():
+        val_str = str(value).strip()
+        # Workload: Consistent, Number of instances: X  →  extract instances only
+        if key == "Workload":
+            m = re.search(r"Number of instances[:\s]+(\d+)", val_str, re.IGNORECASE)
+            if m:
+                lines.append(f"- Number of instances: {m.group(1)}")
+            continue
+        if _should_skip_field(key, value):
+            continue
+        formatted_val = _format_value(key, value)
+        lines.append(f"- {key}: {formatted_val}")
+    return "<br>\n".join(lines) + ("<br>" if lines else "")
 
 
 def split_group_into_chunks(group_name, group_data):
@@ -179,6 +278,7 @@ HTML_WRAPPER = """<!DOCTYPE html>
   .no-cell {{ text-align: center; vertical-align: top; }}
   .desc-cell {{ vertical-align: top; }}
   .cost-cell {{ text-align: right; vertical-align: top; white-space: nowrap; }}
+  /* Itemised layout — group/sub-group heading rows (colours generated inline per row) */
   .divider td {{ background-color: #0000ff; border: none; height: 10px; padding: 0; }}
   .sum-label {{ text-align: right; }}
   .sum-value {{ text-align: right; white-space: nowrap; }}
@@ -187,11 +287,6 @@ HTML_WRAPPER = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div style="font-family:Arial; font-size:9.5pt; background:#fff8e1; border:1px solid #f0c040; padding:8px 12px; width:656px; margin-bottom:10px;">
-  <b>After pasting into Google Docs:</b><br>
-  1. Select the whole table → click the <b>line &amp; paragraph spacing</b> icon → <b>Remove space after paragraph</b><br>
-  2. Select the whole table → click <b>Table options</b> in the toolbar (top right) → scroll to Colour → set table border to <b>1pt</b>
-</div>
 <table>
   <colgroup><col class="col-no"><col><col class="col-cost"></colgroup>
   <tr><th>No</th><th>Description</th><th>Monthly Cost</th></tr>
@@ -401,15 +496,15 @@ def handle_generate(event):
             except Exception as e:
                 print(f"S3 upload failed (non-fatal): {e}")
 
-        # Save job metadata
+        # Save job metadata — itemised layout skips Claude workers, total_chunks=0
         s3.put_object(
             Bucket=S3_BUCKET,
             Key=f"jobs/{job_id}/meta.json",
             Body=json.dumps({
                 "customer_name": customer_name,
                 "groups": groups,
-                "chunks": chunks,
-                "total_chunks": len(chunks),
+                "chunks": [],       # itemised assembly reads input.json directly — no workers
+                "total_chunks": 0,
                 "myr_rate": myr_rate,
                 "currency": currency,
                 "total_monthly": f"{total_monthly:,.2f}",
@@ -421,7 +516,7 @@ def handle_generate(event):
             ContentType="application/json",
         )
 
-        # Save full data for workers
+        # Save full input data for assembly
         s3.put_object(
             Bucket=S3_BUCKET,
             Key=f"jobs/{job_id}/input.json",
@@ -429,27 +524,12 @@ def handle_generate(event):
             ContentType="application/json",
         )
 
-        # Trigger one worker per chunk (all async, run in parallel)
-        fn_name = os.environ.get("WORKER_FUNCTION", "pricing-table-generator")
-        for i, chunk in enumerate(chunks):
-            lam.invoke(
-                FunctionName=fn_name,
-                InvocationType="Event",
-                Payload=json.dumps({
-                    "path": "/__process",
-                    "httpMethod": "POST",
-                    "body": json.dumps({
-                        "job_id": job_id,
-                        "chunk_index": i,
-                    }),
-                }).encode(),
-            )
-
+        # No Lambda workers dispatched — frontend polls /api/status once and gets done immediately
         return cors_response(200, json.dumps({
             "job_id": job_id,
             "customer_name": customer_name,
             "total_groups": len(groups),
-            "total_chunks": len(chunks),
+            "total_chunks": 0,
             "groups": groups,
             "status": "processing",
         }))
@@ -532,116 +612,97 @@ def handle_status(event):
         if meta.get("cloud") == "azure":
             return assemble_azure_html(meta, groups, chunks, done_chunks)
 
-        # All chunks done — reassemble into group rows
-        # Group chunks by group_name, maintaining order
-        group_html_parts = {}  # group_name -> {sub_name -> [html_parts]}
-        for i in range(total_chunks):
-            chunk = chunks[i]
-            result = done_chunks[i]
-            gname = chunk["group_name"]
-            sub_name = chunk.get("sub_name")
-            is_nested = chunk.get("is_nested", False)
-            partial = result.get("partial_html", "")
-
-            if gname not in group_html_parts:
-                group_html_parts[gname] = {"is_nested": is_nested, "parts": {}}
-            key = sub_name if sub_name else "__flat__"
-            if key not in group_html_parts[gname]["parts"]:
-                group_html_parts[gname]["parts"][key] = []
-            group_html_parts[gname]["parts"][key].append(partial)
-
-        # Build final rows in group order
-        # Load input once outside the loop
+        # All chunks done — build itemised table: one row per group/sub-group heading + one row per service
         inp = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/input.json")["Body"].read())
         rows_html = []
+
         for row_num, gname in enumerate(groups, 1):
-            if gname not in group_html_parts:
-                continue
-            ginfo = group_html_parts[gname]
-            is_nested = ginfo["is_nested"]
-            parts = ginfo["parts"]
             clean_name = re.sub(r"^Original Grouping\s*>\s*", "", gname).strip()
 
-            # Calculate group total from input using recursive collector
+            # Get flat list of (path, service) for this group
             gdata = inp["data"]["Groups"].get(gname, {})
             if isinstance(gdata, list):
                 gdata = {"Services": gdata}
-            gtotal = sum(
-                float(s["Service Cost"]["monthly"])
-                for _, s in collect_services_recursive(gdata)
+            all_services = collect_services_recursive(gdata)
+
+            # Calculate total for this top-level group
+            gtotal = sum(float(s["Service Cost"]["monthly"]) for _, s in all_services)
+
+            # Compute max sub-group depth for this group (for gradient scaling)
+            max_depth = max((len(path) for path, _ in all_services), default=0)
+
+            # Emit top-level group heading row (depth 0)
+            style0 = grp_heading_style(0, max_depth)
+            rows_html.append(
+                f'  <tr>'
+                f'<td class="no-cell" style="{style0}">{row_num}.</td>'
+                f'<td class="desc-cell" style="{style0}"><b>{clean_name}</b></td>'
+                f'<td class="cost-cell" style="{style0}">USD {gtotal:,.2f}</td>'
+                f'</tr>'
             )
 
-            if not is_nested:
-                # Flat group — no sub-headings, services listed directly
-                inner = "\n".join(parts.get("__flat__", []))
-                rows_html.append(f'  <tr>\n    <td class="no-cell">{row_num}.</td>\n    <td class="desc-cell">\n<b>{clean_name}</b><br>\n<br>\n{inner}\n    </td>\n    <td class="cost-cell">USD {gtotal:,.2f}</td>\n  </tr>')
-            else:
-                # Nested group — render hierarchical headings from path tuples.
-                # parts keys are JSON-encoded path lists e.g. '["GroupA","SubGroup"]'
+            # Bucket services by path, preserving insertion order
+            path_buckets = {}   # path_tuple -> [service, ...]
+            for path, svc in all_services:
+                if path not in path_buckets:
+                    path_buckets[path] = []
+                path_buckets[path].append(svc)
 
-                # Decode path tuples and pair with html content
-                path_sections = []
-                for raw_key, sub_parts in parts.items():
-                    if raw_key == "__flat__":
-                        path_tup = ()
-                    else:
-                        try:
-                            path_tup = tuple(json.loads(raw_key))
-                        except Exception:
-                            path_tup = (raw_key,)
-                    path_sections.append((path_tup, "\n".join(sub_parts)))
+            # Assign dot-numbers to every unique sub-path prefix
+            prefix_counters = {}
+            path_numbers = {}
 
-                # Assign dot-numbers to every unique path prefix in order
-                prefix_counters = {}   # parent_path -> current child counter
-                path_numbers = {}      # path_tuple -> dot-number string
-
-                def get_path_number(path):
-                    if path in path_numbers:
-                        return path_numbers[path]
-                    parent = path[:-1]
-                    if parent not in prefix_counters:
-                        prefix_counters[parent] = 0
-                    prefix_counters[parent] += 1
-                    num = prefix_counters[parent]
-                    parent_num = path_numbers.get(parent, "")
-                    path_numbers[path] = f"{parent_num}.{num}" if parent_num else str(num)
+            def get_sub_path_number(path):
+                if path in path_numbers:
                     return path_numbers[path]
+                parent = path[:-1]
+                if parent not in prefix_counters:
+                    prefix_counters[parent] = 0
+                prefix_counters[parent] += 1
+                n = prefix_counters[parent]
+                parent_num = path_numbers.get(parent, str(row_num))
+                path_numbers[path] = f"{parent_num}.{n}"
+                return path_numbers[path]
 
-                for path_tup, _ in path_sections:
-                    for depth in range(1, len(path_tup) + 1):
-                        get_path_number(path_tup[:depth])
+            for path in path_buckets:
+                for depth in range(1, len(path) + 1):
+                    get_sub_path_number(path[:depth])
 
-                # Render headings + services.
-                # Use the same pattern that worked in v3.1:
-                #   each section = heading<br>\n<br>\n + services
-                #   sections joined with \n<br>\n  (blank line between sections)
-                # For multi-level paths, ancestor headings are stacked before the services.
-                section_blocks = []
-                emitted_prefixes = set()
+            emitted_paths = set()
 
-                for path_tup, html_content in path_sections:
-                    if not path_tup:
-                        section_blocks.append(html_content)
-                        continue
+            for path, services in path_buckets.items():
+                # Emit any new sub-group heading rows for this path
+                for depth in range(1, len(path) + 1):
+                    prefix = path[:depth]
+                    if prefix not in emitted_paths:
+                        emitted_paths.add(prefix)
+                        label = prefix[-1]
+                        sub_num = path_numbers.get(prefix, "")
+                        style = grp_heading_style(depth, max_depth)
+                        rows_html.append(
+                            f'  <tr>'
+                            f'<td class="no-cell" style="{style}">{sub_num}.</td>'
+                            f'<td class="desc-cell" style="{style}"><b>{label}</b></td>'
+                            f'<td class="cost-cell" style="{style}"></td>'
+                            f'</tr>'
+                        )
 
-                    # Build heading stack for new prefixes (shallowest first)
-                    heading_lines = []
-                    for depth in range(1, len(path_tup) + 1):
-                        prefix = path_tup[:depth]
-                        if prefix not in emitted_prefixes:
-                            emitted_prefixes.add(prefix)
-                            label = prefix[-1]
-                            num = path_numbers.get(prefix, "")
-                            indent = "&nbsp;" * (4 * (depth - 1))
-                            heading_lines.append(f"{indent}<b>{num}. {label}</b><br>")
-
-                    # Join heading stack with blank line between each level,
-                    # then blank line before services — same as v3.1 pattern
-                    heading_block = "\n<br>\n".join(heading_lines)
-                    section_blocks.append(f"{heading_block}\n<br>\n{html_content}")
-
-                inner = "\n<br>\n".join(section_blocks)
-                rows_html.append(f'  <tr>\n    <td class="no-cell">{row_num}.</td>\n    <td class="desc-cell">\n<b>{clean_name}</b><br>\n<br>\n{inner}\n    </td>\n    <td class="cost-cell">USD {gtotal:,.2f}</td>\n  </tr>')
+                # Emit one row per service
+                for svc in services:
+                    svc_name = (svc.get("Service Name") or "").strip()
+                    svc_desc = (svc.get("Description") or "").strip()
+                    display_name = f"{svc_name} - {svc_desc}" if svc_desc else svc_name
+                    props_html = format_service_props_html(svc)
+                    svc_cost = float(svc.get("Service Cost", {}).get("monthly", 0))
+                    rows_html.append(
+                        f'  <tr>'
+                        f'<td class="no-cell"></td>'
+                        f'<td class="desc-cell">'
+                        f'<b>{display_name}</b><br>\n{props_html}'
+                        f'</td>'
+                        f'<td class="cost-cell">USD {svc_cost:,.2f}</td>'
+                        f'</tr>'
+                    )
 
         html = HTML_WRAPPER.format(
             customer_name=meta["customer_name"],

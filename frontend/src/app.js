@@ -163,7 +163,14 @@ function awsCollectServices(node, path) {
     }
     if (node && typeof node === 'object') {
         if (Array.isArray(node.Services)) {
+            // Collect flat services at this level first
             node.Services.forEach(s => out.push({ ...s, _path: path }));
+            // Then recurse into any sibling sub-group keys
+            Object.entries(node).forEach(([key, val]) => {
+                if (key !== 'Services') {
+                    out.push(...awsCollectServices(val, path.concat(key)));
+                }
+            });
             return out;
         }
         Object.entries(node).forEach(([key, val]) => {
