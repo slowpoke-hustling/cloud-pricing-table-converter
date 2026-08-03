@@ -5,6 +5,14 @@ Parameters:
   BucketName:
     Type: String
     Description: Single S3 bucket for frontend, lambda zip, uploads, and jobs
+  GoogleClientId:
+    Type: String
+    NoEcho: true
+    Description: Google OAuth client ID for Sign-In button verification
+  AllowedDomain:
+    Type: String
+    Default: company-domain.com
+    Description: Email domain allowed to access this tool
 
 Resources:
 
@@ -69,6 +77,32 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref GenerateFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*'
+
+  # ── Auth Lambda ──────────────────────────────────────────────────────────
+  AuthFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: pricing-table-generator-auth
+      Runtime: python3.12
+      Handler: auth_handler.handler
+      Role: !GetAtt LambdaRole.Arn
+      Code:
+        S3Bucket: !Ref BucketName
+        S3Key: lambda/auth_handler.zip
+      Timeout: 15
+      MemorySize: 128
+      Environment:
+        Variables:
+          GOOGLE_CLIENT_ID: !Ref GoogleClientId
+          ALLOWED_DOMAIN: !Ref AllowedDomain
+
+  AuthPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AuthFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*'
@@ -344,9 +378,60 @@ Resources:
             method.response.header.Access-Control-Allow-Methods: true
             method.response.header.Access-Control-Allow-Origin: true
 
+  # ── /auth/check ──────────────────────────────────────────────────────────
+  AuthRootResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref Api
+      ParentId: !GetAtt Api.RootResourceId
+      PathPart: auth
+
+  AuthCheckResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref Api
+      ParentId: !Ref AuthRootResource
+      PathPart: check
+
+  AuthCheckGet:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref Api
+      ResourceId: !Ref AuthCheckResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthFunction.Arn}/invocations'
+
+  AuthCheckOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref Api
+      ResourceId: !Ref AuthCheckResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
   ApiDeployment3:
     Type: AWS::ApiGateway::Deployment
-    DependsOn: [GeneratePost, GenerateOptions, GenerateGcpPost, GenerateGcpOptions, ParseGcpPost, ParseGcpOptions, ParseAzurePost, ParseAzureOptions, GenerateAzurePost, GenerateAzureOptions, StatusGet, StatusOptions]
+    DependsOn: [GeneratePost, GenerateOptions, GenerateGcpPost, GenerateGcpOptions, ParseGcpPost, ParseGcpOptions, ParseAzurePost, ParseAzureOptions, GenerateAzurePost, GenerateAzureOptions, StatusGet, StatusOptions, AuthCheckGet, AuthCheckOptions]
     Properties:
       RestApiId: !Ref Api
       StageName: prod

@@ -865,11 +865,6 @@ GCP_HTML_WRAPPER = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div style="font-family:Arial; font-size:9.5pt; background:#fff8e1; border:1px solid #f0c040; padding:8px 12px; width:656px; margin-bottom:10px;">
-  <b>After pasting into Google Docs:</b><br>
-  1. Select the whole table → click the <b>line &amp; paragraph spacing</b> icon → <b>Remove space after paragraph</b><br>
-  2. Select the whole table → click <b>Table options</b> in the toolbar (top right) → scroll to Colour → set table border to <b>1pt</b>
-</div>
 <table>
   <colgroup><col class="col-no"><col><col class="col-cost"></colgroup>
   <tr><th>No</th><th>Description</th><th>Monthly Cost</th></tr>
@@ -892,20 +887,44 @@ def assemble_gcp_html(meta, groups, chunks, done_chunks):
     tax_pct = "9% GST" if currency == "SGD" else "8% SST"
     calc_url = meta.get("calc_url", "")
     calc_link = f'<br><a href="{calc_url}" target="_blank">Calculator Link: {calc_url}</a>' if calc_url else ""
+
+    # Build group lookup from chunks (chunk_data is the full group object)
+    gcp_groups = {c["group_name"]: c["chunk_data"] for c in chunks}
+
+    GRP_STYLE = "background-color:#1a73e8;color:#fff;font-weight:bold;"
     rows_html = []
     for row_num, gname in enumerate(groups, 1):
-        chunk_indices = [i for i, c in enumerate(chunks) if c["group_name"] == gname]
-        inner = "\n".join(done_chunks[i].get("partial_html", "") for i in chunk_indices if i in done_chunks)
-        # Get group total — use the pre-summed total stored on the group object
-        gtotal = sum(
-            c["chunk_data"].get("total", 0)
-            for c in chunks if c["group_name"] == gname
-        )
+        g = gcp_groups.get(gname, {})
+        gtotal = float(g.get("total", 0))
+        services = g.get("services", [])
+
+        # Group heading row
         rows_html.append(
-            f'  <tr>\n    <td class="no-cell">{row_num}.</td>\n'
-            f'    <td class="desc-cell">\n<b>{gname}</b><br>\n<br>\n{inner}\n    </td>\n'
-            f'    <td class="cost-cell">USD {gtotal:,.2f}</td>\n  </tr>'
+            f'  <tr>'
+            f'<td class="no-cell" style="{GRP_STYLE}">{row_num}.</td>'
+            f'<td class="desc-cell" style="{GRP_STYLE}"><b>{gname}</b></td>'
+            f'<td class="cost-cell" style="{GRP_STYLE}">USD {gtotal:,.2f}</td>'
+            f'</tr>'
         )
+        # One row per service
+        for svc in services:
+            svc_name = svc.get("name", "").strip()
+            svc_cost = float(svc.get("cost") or 0)
+            fields = svc.get("fields") or []
+            field_lines = "<br>\n".join(
+                f"- {f['key']}: {f['value']}"
+                for f in fields
+                if str(f.get("value", "")).strip().lower() not in ("", "false", "0")
+            )
+            props_html = (field_lines + "<br>") if field_lines else ""
+            rows_html.append(
+                f'  <tr>'
+                f'<td class="no-cell"></td>'
+                f'<td class="desc-cell"><b>{svc_name}</b><br>\n{props_html}</td>'
+                f'<td class="cost-cell">USD {svc_cost:,.2f}</td>'
+                f'</tr>'
+            )
+
     html = GCP_HTML_WRAPPER.format(
         customer_name=meta["customer_name"],
         rows="\n".join(rows_html),
@@ -1137,11 +1156,6 @@ AZURE_HTML_WRAPPER = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div style="font-family:Arial; font-size:9.5pt; background:#fff8e1; border:1px solid #f0c040; padding:8px 12px; width:656px; margin-bottom:10px;">
-  <b>After pasting into Google Docs:</b><br>
-  1. Select the whole table → click the <b>line &amp; paragraph spacing</b> icon → <b>Remove space after paragraph</b><br>
-  2. Select the whole table → click <b>Table options</b> in the toolbar (top right) → scroll to Colour → set table border to <b>1pt</b>
-</div>
 <table>
   <colgroup><col class="col-no"><col><col class="col-cost"></colgroup>
   <tr><th>No</th><th>Description</th><th>Monthly Cost</th></tr>
@@ -1368,16 +1382,44 @@ Services:
 def assemble_azure_html(meta, groups, chunks, done_chunks):
     currency = meta.get("currency", "MYR")
     tax_pct = "9% GST" if currency == "SGD" else "8% SST"
+
+    # Build group lookup from chunks
+    azure_groups = {c["group_name"]: c["chunk_data"] for c in chunks}
+
+    GRP_STYLE = "background-color:#0078d4;color:#fff;font-weight:bold;"
     rows_html = []
     for row_num, gname in enumerate(groups, 1):
-        chunk_indices = [i for i, c in enumerate(chunks) if c["group_name"] == gname]
-        inner = "\n".join(done_chunks[i].get("partial_html", "") for i in chunk_indices if i in done_chunks)
-        gtotal = sum(c["chunk_data"].get("total", 0) for c in chunks if c["group_name"] == gname)
+        g = azure_groups.get(gname, {})
+        gtotal = float(g.get("total", 0))
+        services = g.get("services", [])
+
+        # Group heading row
         rows_html.append(
-            f'  <tr>\n    <td class="no-cell">{row_num}.</td>\n'
-            f'    <td class="desc-cell">\n<b>{gname}</b><br>\n<br>\n{inner}\n    </td>\n'
-            f'    <td class="cost-cell">USD {gtotal:,.2f}</td>\n  </tr>'
+            f'  <tr>'
+            f'<td class="no-cell" style="{GRP_STYLE}">{row_num}.</td>'
+            f'<td class="desc-cell" style="{GRP_STYLE}"><b>{gname}</b></td>'
+            f'<td class="cost-cell" style="{GRP_STYLE}">USD {gtotal:,.2f}</td>'
+            f'</tr>'
         )
+        # One row per service
+        for svc in services:
+            svc_name = svc.get("name", "").strip()
+            svc_type = svc.get("service_type", "").strip()
+            svc_cost = float(svc.get("cost") or 0)
+            display_name = f"{svc_name} ({svc_type})" if svc_type else svc_name
+            description = svc.get("description", "")
+            props_html = ""
+            if description:
+                lines = [l.strip() for l in description.split("\n") if l.strip()]
+                props_html = "<br>\n".join(lines) + "<br>"
+            rows_html.append(
+                f'  <tr>'
+                f'<td class="no-cell"></td>'
+                f'<td class="desc-cell"><b>{display_name}</b><br>\n{props_html}</td>'
+                f'<td class="cost-cell">USD {svc_cost:,.2f}</td>'
+                f'</tr>'
+            )
+
     html = AZURE_HTML_WRAPPER.format(
         customer_name=meta["customer_name"],
         rows="\n".join(rows_html),

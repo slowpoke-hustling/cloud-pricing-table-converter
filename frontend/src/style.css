@@ -232,3 +232,39 @@ input[type="number"]:focus { border-color: var(--accent); }
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Sign-in screen ── */
+.signin-screen {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: var(--bg); z-index: 1000;
+}
+.signin-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 40px 36px; text-align: center; width: 340px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+}
+.signin-logo { font-size: 22px; font-weight: 700; color: var(--text); }
+.signin-subtitle { font-size: 12px; color: var(--text-muted); margin-top: -10px; }
+.signin-note { font-size: 11px; color: var(--text-muted); }
+.signin-error {
+    font-size: 12px; color: var(--error); background: #fef2f2;
+    border: 1px solid #fecaca; border-radius: 6px; padding: 8px 12px; width: 100%;
+}
+
+/* ── User pill + sign-out ── */
+.user-pill {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--text-muted);
+}
+.user-pill-avatar {
+    width: 26px; height: 26px; background: var(--accent); color: white;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; flex-shrink: 0;
+}
+.btn-signout {
+    font-size: 11px; color: var(--text-muted); background: none;
+    border: 1px solid var(--border); border-radius: 5px; padding: 3px 10px;
+    cursor: pointer;
+}
+.btn-signout:hover { color: var(--error); border-color: var(--error); }

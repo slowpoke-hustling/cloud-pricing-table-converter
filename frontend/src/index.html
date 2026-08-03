@@ -5,16 +5,47 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sales Tools</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <meta name="google-signin-client_id" content="__GOOGLE_CLIENT_ID__">
 </head>
 <body>
-    <div class="app">
+
+    <!-- ── Sign-in screen ── -->
+    <div class="signin-screen" id="signin-screen">
+        <div class="signin-card">
+            <div class="signin-logo">Sales Tools</div>
+            <div class="signin-subtitle">Company Internal</div>
+            <div id="g_id_onload"
+                data-client_id="__GOOGLE_CLIENT_ID__"
+                data-callback="onGoogleSignIn"
+                data-auto_select="true">
+            </div>
+            <div class="g_id_signin"
+                data-type="standard"
+                data-shape="rectangular"
+                data-theme="outline"
+                data-text="sign_in_with"
+                data-size="large"
+                data-logo_alignment="left">
+            </div>
+            <div class="signin-error" id="signin-error" style="display:none"></div>
+            <div class="signin-note">Sign in with your @company-domain.com Google account</div>
+        </div>
+    </div>
+
+    <!-- ── Main app (hidden until signed in) ── -->
+    <div class="app" id="app" style="display:none">
         <header class="topbar">
             <div class="topbar-left">
                 <h1 class="logo">Sales Tools</h1>
             </div>
             <div class="topbar-right">
                 <span class="model-badge">Claude Sonnet 4.6</span>
-                <span class="avatar">SA</span>
+                <span class="user-pill" id="user-pill" style="display:none">
+                    <span class="user-pill-avatar" id="user-pill-avatar"></span>
+                    <span id="user-pill-name"></span>
+                </span>
+                <button class="btn-signout" id="btn-signout" style="display:none" onclick="signOut()">Sign out</button>
             </div>
         </header>
 

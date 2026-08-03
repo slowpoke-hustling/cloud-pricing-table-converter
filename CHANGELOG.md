@@ -1,5 +1,25 @@
 # Changelog — Cloud Pricing Table Converter
 
+## v3.6 — 2026-08-03
+**Google Sign-In auth + GCP/Azure itemised layout**
+
+### Auth (Task 1)
+- Added Google Sign-In (GSI) gate — only `@company-domain.com` accounts can access the tool
+- New `auth_handler.py` Lambda: verifies Google ID token via tokeninfo endpoint, checks email domain
+- New `/auth/check` API Gateway route backed by `pricing-table-generator-auth` Lambda
+- `index.html`: sign-in screen with GSI button shown before app; `app` div hidden until authenticated
+- `app.js`: `onGoogleSignIn` callback, `showApp`/`signOut`, session restored from `sessionStorage` on reload
+- All API calls now include `Authorization: Bearer {id_token}` header via `apiFetch`/`apiPost`/`apiGet`
+- `deploy.sh`: packages `auth_handler.py` as separate zip, injects `GOOGLE_CLIENT_ID` into frontend + Lambda env
+- `template.yaml`: new `GoogleClientId` + `AllowedDomain` parameters, `AuthFunction`, `AuthPermission`, `/auth/check` API resources
+- No DynamoDB allowlist needed — domain check is stateless
+
+### GCP/Azure itemised layout (Task 2)
+- GCP generated table: one row per group (blue `#1a73e8` header) + one row per service with individual cost and fields
+- Azure generated table: one row per group (blue `#0078d4` header) + one row per service with `name (service_type)`, description bullets, individual cost
+- Both skip Claude workers for assembly — reads directly from `chunks` data in meta
+- Yellow "After pasting into Google Docs" advisory box removed from GCP and Azure HTML wrappers
+
 ## v3.5 — 2026-07-20
 **Itemised table layout — one row per service with individual prices**
 

@@ -1,15 +1,18 @@
 #!/bin/bash
 # Cloud Pricing Table Converter — Deploy (single S3 bucket)
-# The bucket is managed outside CloudFormation to avoid chicken-and-egg
-# with Lambda requiring the zip to exist before stack creation.
+# Usage:
+#   First deploy:  GOOGLE_CLIENT_ID=xxx ./deploy.sh
+#   Subsequent:    AWS_PROFILE=kiro-deploy ./deploy.sh
 set -e
 
-PROFILE="${AWS_PROFILE:-default}"   # override: AWS_PROFILE=your-profile ./deploy.sh
+PROFILE="${AWS_PROFILE:-default}"
 REGION="us-east-1"
 STACK_NAME="pricing-table-generator"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --profile $PROFILE)
 BUCKET="pricing-table-gen-${ACCOUNT_ID}"
+
+GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"   # required on first deploy; optional after
 
 echo "=== Pricing Table Generator Deployment ==="
 echo "Account: $ACCOUNT_ID | Region: $REGION | Bucket: $BUCKET"
@@ -19,14 +22,14 @@ echo "[1/5] Creating S3 bucket..."
 aws s3api create-bucket --bucket $BUCKET --region $REGION \
     --profile $PROFILE 2>/dev/null && echo "  Bucket created" || echo "  Bucket already exists"
 
-# 2. Package and upload Lambda zip (must exist before CloudFormation)
+# 2. Package and upload Lambda zips
 echo "[2/5] Packaging and uploading Lambda..."
+
+# main function — includes openpyxl
 rm -f /tmp/pricing_table_generator.zip
-# Install openpyxl into a temp dir for packaging
 LAMBDA_PKG_DIR=$(mktemp -d)
 pip3 install openpyxl --quiet --target "$LAMBDA_PKG_DIR" 2>/dev/null || python3 -m pip install openpyxl --quiet --target "$LAMBDA_PKG_DIR"
 cp "$SCRIPT_DIR/../backend/lambda_function.py" "$LAMBDA_PKG_DIR/lambda_function.py"
-# IMPORTANT: zip with paths relative to LAMBDA_PKG_DIR so lambda_function.py is at zip root
 python3 -c "
 import zipfile, os
 pkg = '$LAMBDA_PKG_DIR'
@@ -41,18 +44,29 @@ rm -rf "$LAMBDA_PKG_DIR"
 aws s3 cp /tmp/pricing_table_generator.zip "s3://$BUCKET/lambda/pricing_table_generator.zip" \
     --profile $PROFILE --region $REGION
 
-# 3. Deploy CloudFormation only if template changed
+# auth function — single file, no dependencies
+zip -j /tmp/auth_handler.zip "$SCRIPT_DIR/../backend/auth_handler.py"
+aws s3 cp /tmp/auth_handler.zip "s3://$BUCKET/lambda/auth_handler.zip" \
+    --profile $PROFILE --region $REGION
+
+# 3. Deploy CloudFormation
 echo "[3/5] Deploying CloudFormation stack..."
 TEMPLATE_HASH=$(md5 -q "$SCRIPT_DIR/template.yaml" 2>/dev/null || md5sum "$SCRIPT_DIR/template.yaml" | cut -d' ' -f1)
 HASH_FILE="/tmp/ptg-template-hash-${ACCOUNT_ID}"
 PREV_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "")
 
-if [ "$TEMPLATE_HASH" != "$PREV_HASH" ]; then
+# Build parameter overrides — only pass GoogleClientId if explicitly provided
+CF_PARAMS="BucketName=$BUCKET"
+if [ -n "$GOOGLE_CLIENT_ID" ]; then
+    CF_PARAMS="$CF_PARAMS GoogleClientId=$GOOGLE_CLIENT_ID"
+fi
+
+if [ "$TEMPLATE_HASH" != "$PREV_HASH" ] || [ -n "$GOOGLE_CLIENT_ID" ]; then
     aws cloudformation deploy \
         --template-file "$SCRIPT_DIR/template.yaml" \
         --stack-name $STACK_NAME \
         --capabilities CAPABILITY_IAM \
-        --parameter-overrides BucketName=$BUCKET \
+        --parameter-overrides $CF_PARAMS \
         --profile $PROFILE \
         --region $REGION
     echo "$TEMPLATE_HASH" > "$HASH_FILE"
@@ -60,7 +74,7 @@ else
     echo "  Template unchanged — skipping CloudFormation deploy"
 fi
 
-# Always force Lambda to use the latest zip (CloudFormation won't detect zip content changes)
+# Always force Lambda code updates
 echo "  Updating Lambda function code..."
 aws lambda update-function-code \
     --function-name pricing-table-generator \
@@ -68,6 +82,12 @@ aws lambda update-function-code \
     --s3-key lambda/pricing_table_generator.zip \
     --profile $PROFILE \
     --region $REGION > /dev/null
+aws lambda update-function-code \
+    --function-name pricing-table-generator-auth \
+    --s3-bucket $BUCKET \
+    --s3-key lambda/auth_handler.zip \
+    --profile $PROFILE \
+    --region $REGION > /dev/null 2>&1 || echo "  (auth function not yet created — will be after CloudFormation)"
 
 # 4. Get outputs
 echo "[4/5] Getting stack outputs..."
@@ -84,10 +104,10 @@ CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
 # 5. Deploy frontend with API URL injected
 echo "[5/5] Deploying frontend..."
 DEPLOY_TS=$(date +%s)
-sed "s|const API_URL = ''|const API_URL = '${API_URL}'|" \
+sed "s|const API_URL = ''|const API_URL = '${API_URL}'|; s|const GOOGLE_CLIENT_ID = ''|const GOOGLE_CLIENT_ID = '${GOOGLE_CLIENT_ID}'|" \
     "$SCRIPT_DIR/../frontend/src/app.js" > /tmp/app.js.deploy
-# Inject deploy timestamp into index.html for cache busting
-sed "s|__DEPLOY_TS__|${DEPLOY_TS}|g" \
+# Inject deploy timestamp and Google Client ID into index.html for cache busting + GSI
+sed "s|__DEPLOY_TS__|${DEPLOY_TS}|g; s|__GOOGLE_CLIENT_ID__|${GOOGLE_CLIENT_ID}|g" \
     "$SCRIPT_DIR/../frontend/src/index.html" > /tmp/index.html.deploy
 aws s3 sync "$SCRIPT_DIR/../frontend/src/" "s3://$BUCKET/frontend/" \
     --profile $PROFILE --region $REGION --delete --exclude "app.js" --exclude "index.html" --exclude "style.css"
@@ -116,6 +136,11 @@ echo "API:    $API_URL"
 echo "Bucket: s3://$BUCKET"
 echo ""
 echo "  s3://$BUCKET/frontend/   <- web files (served by CloudFront)"
-echo "  s3://$BUCKET/lambda/     <- Lambda zip"
+echo "  s3://$BUCKET/lambda/     <- Lambda zips"
 echo "  s3://$BUCKET/uploads/    <- customer JSON uploads"
 echo "  s3://$BUCKET/jobs/       <- temp processing files"
+if [ -z "$GOOGLE_CLIENT_ID" ]; then
+    echo ""
+    echo "⚠️  GOOGLE_CLIENT_ID not set — auth Lambda will reject all logins."
+    echo "   First time setup: GOOGLE_CLIENT_ID=xxx AWS_PROFILE=kiro-deploy ./deploy.sh"
+fi

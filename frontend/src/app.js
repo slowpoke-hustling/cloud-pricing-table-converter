@@ -1,5 +1,91 @@
 // Pricing Table Generator — Frontend
 const API_URL = ''; // Injected during deploy
+const GOOGLE_CLIENT_ID = ''; // Injected during deploy
+
+// ── Auth state ────────────────────────────────────────────────────────────────
+let _idToken   = null;
+let _userEmail = null;
+let _userName  = null;
+
+window.onGoogleSignIn = async function(credentialResponse) {
+    _idToken = credentialResponse.credential;
+    try {
+        const payload = JSON.parse(atob(_idToken.split('.')[1]));
+        _userEmail = payload.email;
+        _userName  = payload.name || payload.email;
+    } catch (e) {
+        showSigninError('Could not read token. Please try again.');
+        return;
+    }
+    try {
+        await apiFetch('/auth/check', 'GET');
+    } catch (e) {
+        if (e.status === 403) {
+            showSigninError(`${_userEmail} is not authorised. Only @company-domain.com accounts are allowed.`);
+        } else {
+            showSigninError('Sign-in failed: ' + (e.message || 'Unknown error'));
+        }
+        _idToken = null; _userEmail = null; _userName = null;
+        return;
+    }
+    sessionStorage.setItem('ptg_token', _idToken);
+    sessionStorage.setItem('ptg_email', _userEmail);
+    sessionStorage.setItem('ptg_name',  _userName);
+    showApp();
+};
+
+function showApp() {
+    document.getElementById('signin-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    const pill = document.getElementById('user-pill');
+    const avatarEl = document.getElementById('user-pill-avatar');
+    const nameEl   = document.getElementById('user-pill-name');
+    const signoutEl = document.getElementById('btn-signout');
+    if (pill && _userName) {
+        pill.style.display = 'flex';
+        avatarEl.textContent = _userName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+        nameEl.textContent   = _userName.split(' ')[0];
+    }
+    if (signoutEl) signoutEl.style.display = 'inline-block';
+}
+
+function signOut() {
+    sessionStorage.removeItem('ptg_token');
+    sessionStorage.removeItem('ptg_email');
+    sessionStorage.removeItem('ptg_name');
+    _idToken = null; _userEmail = null; _userName = null;
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('signin-screen').style.display = 'flex';
+    // Reset Google's one-tap so sign-in button renders fresh
+    if (window.google?.accounts?.id) google.accounts.id.disableAutoSelect();
+}
+
+function showSigninError(msg) {
+    const el = document.getElementById('signin-error');
+    el.textContent = msg;
+    el.style.display = 'block';
+}
+
+async function apiFetch(path, method, body) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (_idToken) headers['Authorization'] = `Bearer ${_idToken}`;
+    const resp = await fetch(`${API_URL}${path}`, {
+        method,
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        const e = new Error(err.error || `HTTP ${resp.status}`);
+        e.status = resp.status;
+        throw e;
+    }
+    return resp.json();
+}
+
+// Thin wrappers used in generate/parse/status calls (keeps auth header on all API calls)
+async function apiPost(path, body) { return apiFetch(path, 'POST', body); }
+async function apiGet(path)        { return apiFetch(path, 'GET'); }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -31,6 +117,22 @@ function refreshCustomerDatalist() {
 // ── Cloud tab switching ───────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Restore session if token saved
+    const savedToken = sessionStorage.getItem('ptg_token');
+    const savedEmail = sessionStorage.getItem('ptg_email');
+    const savedName  = sessionStorage.getItem('ptg_name');
+    if (savedToken && savedEmail) {
+        _idToken = savedToken; _userEmail = savedEmail; _userName = savedName || savedEmail;
+        // Re-validate token on load
+        apiFetch('/auth/check', 'GET')
+            .then(() => showApp())
+            .catch(() => {
+                sessionStorage.removeItem('ptg_token');
+                sessionStorage.removeItem('ptg_email');
+                sessionStorage.removeItem('ptg_name');
+                _idToken = null; _userEmail = null; _userName = null;
+            });
+    }
     // Feature tabs
     document.querySelectorAll('.tab').forEach(tab => {
         tab.addEventListener('click', () => {
@@ -299,12 +401,7 @@ async function awsGenerate() {
     awsResetOpenButton(); awsSetStatus('Submitting job...');
     awsRenderPreview(awsData);
     try {
-        const resp = await fetch(`${API_URL}/api/generate`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ json: awsData, myr_rate: myrRate, currency, customer_name: customerName }),
-        });
-        if (!resp.ok) { const e = await resp.json().catch(()=>{}); throw new Error(e.error || `Server error ${resp.status}`); }
-        const { job_id, groups, total_groups } = await resp.json();
+        const { job_id, groups, total_groups } = await apiPost('/api/generate', { json: awsData, myr_rate: myrRate, currency, customer_name: customerName });
         groups.forEach((_, i) => awsUpdateGroupStatus(i, 'processing'));
         awsSetStatus(`Claude is processing ${total_groups} group${total_groups>1?'s':''}...`);
         const result = await pollForResult(job_id, groups, awsUpdateGroupStatus);
@@ -402,12 +499,7 @@ function gcpParse() {
     btn.innerHTML = '<span class="spinner"><i></i><i></i><i></i></span>Parsing...';
     gcpSetStatus('Claude is reading the estimate...');
 
-    fetch(`${API_URL}/api/parse-gcp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-    })
-    .then(r => r.json())
+    apiPost('/api/parse-gcp', { text })
     .then(result => {
         if (result.error) throw new Error(result.error);
         if (!result.groups || !result.groups.length) throw new Error('Could not detect any service groups. Make sure you copied from the GCP Calculator estimate page.');
@@ -507,12 +599,7 @@ async function gcpGenerate() {
     btn.disabled = true; btn.innerHTML = '<span class="spinner"><i></i><i></i><i></i></span>Generating...';
     gcpResetOpenButton(); gcpSetStatus('Submitting job...');
     try {
-        const resp = await fetch(`${API_URL}/api/generate-gcp`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ groups: gcpData.groups, customer_name: customerName, usd_rate: usdRate, currency, calc_url: gcpData.calcUrl || '' }),
-        });
-        if (!resp.ok) { const e = await resp.json().catch(()=>{}); throw new Error(e.error || `Server error ${resp.status}`); }
-        const { job_id, groups, total_groups } = await resp.json();
+        const { job_id, groups, total_groups } = await apiPost('/api/generate-gcp', { groups: gcpData.groups, customer_name: customerName, usd_rate: usdRate, currency, calc_url: gcpData.calcUrl || '' });
         groups.forEach((_, i) => gcpUpdateGroupStatus(i, 'processing'));
         gcpSetStatus(`Claude is processing ${total_groups} group${total_groups>1?'s':''}...`);
         const result = await pollForResult(job_id, groups, gcpUpdateGroupStatus);
@@ -564,9 +651,8 @@ async function pollForResult(jobId, groups, updateStatusFn, maxWait = 300000, in
     const doneSet = new Set();
     while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, interval));
-        const resp = await fetch(`${API_URL}/api/status?job_id=${jobId}`);
-        if (!resp.ok) continue;
-        const data = await resp.json();
+        let data;
+        try { data = await apiGet(`/api/status?job_id=${jobId}`); } catch (e) { continue; }
         if (data.status === 'error') throw new Error(data.error || 'Generation failed');
         if (data.groups_done) {
             data.groups_done.forEach(name => {
@@ -660,16 +746,10 @@ async function azureParse() {
         // Yield again before JSON.stringify to keep spinner alive during serialisation
         await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
 
-        const payload = JSON.stringify({ xlsx_b64: base64, filename: azureFile.name, customer_name: customerName });
+        const payload = { xlsx_b64: base64, filename: azureFile.name, customer_name: customerName };
 
         // POST — returns job_id immediately (async processing)
-        const resp = await fetch(`${API_URL}/api/parse-azure`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: payload,
-        });
-        if (!resp.ok) { const e = await resp.json().catch(()=>{}); throw new Error(e.error || `Server error ${resp.status}`); }
-        const { job_id } = await resp.json();
+        const { job_id } = await apiPost('/api/parse-azure', payload);
 
         // Poll for result
         azureSetStatus('Claude is reading the estimate...');
@@ -696,9 +776,8 @@ async function pollForAzureParse(jobId, maxWait = 120000, interval = 2000) {
     const deadline = Date.now() + maxWait;
     while (Date.now() < deadline) {
         await new Promise(r => setTimeout(r, interval));
-        const resp = await fetch(`${API_URL}/api/status?job_id=${jobId}`);
-        if (!resp.ok) continue;
-        const data = await resp.json();
+        let data;
+        try { data = await apiGet(`/api/status?job_id=${jobId}`); } catch(e) { continue; }
         if (data.status === 'error') throw new Error(data.error || 'Parse failed');
         if (data.status === 'done') return data;
     }
@@ -784,12 +863,7 @@ async function azureGenerate() {
     // Yield to browser to let spinner render
     await new Promise(r => requestAnimationFrame(() => setTimeout(r, 50)));
     try {
-        const resp = await fetch(`${API_URL}/api/generate-azure`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ groups: azureData.groups, customer_name: customerName, usd_rate: usdRate, currency }),
-        });
-        if (!resp.ok) { const e = await resp.json().catch(()=>{}); throw new Error(e.error || `Server error ${resp.status}`); }
-        const { job_id, groups, total_groups } = await resp.json();
+        const { job_id, groups, total_groups } = await apiPost('/api/generate-azure', { groups: azureData.groups, customer_name: customerName, usd_rate: usdRate, currency });
         groups.forEach((_, i) => azureUpdateGroupStatus(i, 'processing'));
         azureSetStatus(`Claude is processing ${total_groups} group${total_groups>1?'s':''}...`);
         const result = await pollForResult(job_id, groups, azureUpdateGroupStatus);
