@@ -12,10 +12,20 @@ __pycache__/
 .venv/
 venv/
 
-# Customer/sample data files
+# Customer/sample data files — NEVER commit these
 *.xlsx
+*.pdf
+*.csv
+uploads/
+jobs/
 
-# Kiro local settings (contains personal MCP config)
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Kiro local settings (contains personal MCP config and tokens)
 .kiro/settings/
 
 # CDK/SAM outputs
