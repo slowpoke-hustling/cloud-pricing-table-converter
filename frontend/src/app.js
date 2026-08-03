@@ -601,7 +601,7 @@ async function gcpGenerate() {
     try {
         const { job_id, groups, total_groups } = await apiPost('/api/generate-gcp', { groups: gcpData.groups, customer_name: customerName, usd_rate: usdRate, currency, calc_url: gcpData.calcUrl || '' });
         groups.forEach((_, i) => gcpUpdateGroupStatus(i, 'processing'));
-        gcpSetStatus(`Claude is processing ${total_groups} group${total_groups>1?'s':''}...`);
+        gcpSetStatus(`Building table for ${total_groups} group${total_groups>1?'s':''}...`);
         const result = await pollForResult(job_id, groups, gcpUpdateGroupStatus);
         window._gcpHtml = result.html;
         gcpSetOpenButtonReady();
@@ -649,8 +649,11 @@ function gcpSetStatus(msg, type = '') {
 async function pollForResult(jobId, groups, updateStatusFn, maxWait = 300000, interval = 3000) {
     const deadline = Date.now() + maxWait;
     const doneSet = new Set();
+    // First poll after 500ms — catches instant results (GCP/Azure itemised, AWS with 0 chunks)
+    let firstPoll = true;
     while (Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, interval));
+        await new Promise(r => setTimeout(r, firstPoll ? 500 : interval));
+        firstPoll = false;
         let data;
         try { data = await apiGet(`/api/status?job_id=${jobId}`); } catch (e) { continue; }
         if (data.status === 'error') throw new Error(data.error || 'Generation failed');
@@ -865,7 +868,7 @@ async function azureGenerate() {
     try {
         const { job_id, groups, total_groups } = await apiPost('/api/generate-azure', { groups: azureData.groups, customer_name: customerName, usd_rate: usdRate, currency });
         groups.forEach((_, i) => azureUpdateGroupStatus(i, 'processing'));
-        azureSetStatus(`Claude is processing ${total_groups} group${total_groups>1?'s':''}...`);
+        azureSetStatus(`Building table for ${total_groups} group${total_groups>1?'s':''}...`);
         const result = await pollForResult(job_id, groups, azureUpdateGroupStatus);
         window._azureHtml = result.html;
         azureSetOpenButtonReady();

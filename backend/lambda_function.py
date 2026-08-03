@@ -1052,7 +1052,7 @@ def handle_generate_gcp(event):
             except Exception as e:
                 print(f"S3 GCP upload failed (non-fatal): {e}")
 
-        # Build chunks — one per group (GCP groups are smaller than AWS)
+        # Build chunks — one per group, stored in meta for assemble_gcp_html
         chunks = [{"group_name": g["name"], "chunk_data": g, "is_nested": False, "sub_name": None} for g in groups]
         group_names = [g["name"] for g in groups]
 
@@ -1062,7 +1062,7 @@ def handle_generate_gcp(event):
                 "customer_name": customer_name,
                 "groups": group_names,
                 "chunks": chunks,
-                "total_chunks": len(chunks),
+                "total_chunks": 0,          # itemised assembly reads chunks directly — no workers needed
                 "usd_rate": usd_rate,
                 "currency": currency,
                 "total_monthly": f"{total_monthly:,.2f}",
@@ -1072,19 +1072,10 @@ def handle_generate_gcp(event):
                 "calc_url": calc_url,
             }).encode(), ContentType="application/json")
 
-        s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/input.json",
-            Body=json.dumps({"groups": groups, "customer_name": customer_name, "usd_rate": usd_rate, "currency": currency}).encode(),
-            ContentType="application/json")
-
-        fn_name = os.environ.get("WORKER_FUNCTION", "pricing-table-generator")
-        for i in range(len(chunks)):
-            lam.invoke(FunctionName=fn_name, InvocationType="Event",
-                Payload=json.dumps({"path": "/__process-gcp", "httpMethod": "POST",
-                    "body": json.dumps({"job_id": job_id, "chunk_index": i})}).encode())
-
+        # No Lambda workers — assembly happens synchronously in handle_status
         return cors_response(200, json.dumps({
             "job_id": job_id, "customer_name": customer_name,
-            "total_groups": len(groups), "total_chunks": len(chunks),
+            "total_groups": len(groups), "total_chunks": 0,
             "groups": group_names, "status": "processing",
         }))
     except Exception as e:
@@ -1374,7 +1365,7 @@ def handle_generate_azure(event):
                 "customer_name": customer_name,
                 "groups": group_names,
                 "chunks": chunks,
-                "total_chunks": len(chunks),
+                "total_chunks": 0,          # itemised assembly reads chunks directly — no workers needed
                 "usd_rate": usd_rate,
                 "currency": currency,
                 "total_monthly": f"{total_monthly:,.2f}",
@@ -1383,15 +1374,10 @@ def handle_generate_azure(event):
                 "total_with_tax": f"{total_local + tax:,.2f}",
             }).encode(), ContentType="application/json")
 
-        fn_name = os.environ.get("WORKER_FUNCTION", "pricing-table-generator")
-        for i in range(len(chunks)):
-            lam.invoke(FunctionName=fn_name, InvocationType="Event",
-                Payload=json.dumps({"path": "/__process-azure", "httpMethod": "POST",
-                    "body": json.dumps({"job_id": job_id, "chunk_index": i})}).encode())
-
+        # No Lambda workers — assembly happens synchronously in handle_status
         return cors_response(200, json.dumps({
             "job_id": job_id, "customer_name": customer_name,
-            "total_groups": len(groups), "total_chunks": len(chunks),
+            "total_groups": len(groups), "total_chunks": 0,
             "groups": group_names, "status": "processing",
         }))
     except Exception as e:
