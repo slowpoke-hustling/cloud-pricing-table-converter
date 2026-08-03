@@ -69,14 +69,33 @@ function showSigninError(msg) {
 async function apiFetch(path, method, body) {
     const headers = { 'Content-Type': 'application/json' };
     if (_idToken) headers['Authorization'] = `Bearer ${_idToken}`;
-    const resp = await fetch(`${API_URL}${path}`, {
-        method,
-        headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
+    let resp;
+    try {
+        resp = await fetch(`${API_URL}${path}`, {
+            method,
+            headers,
+            body: body !== undefined ? JSON.stringify(body) : undefined,
+        });
+    } catch (networkErr) {
+        // True network failure (no internet, DNS, etc.)
+        throw new Error('Network error — check your connection');
+    }
+    if (resp.status === 401 || resp.status === 403) {
+        // Token expired or invalid — force sign out so user re-authenticates
+        sessionStorage.removeItem('ptg_token');
+        sessionStorage.removeItem('ptg_email');
+        sessionStorage.removeItem('ptg_name');
+        _idToken = null; _userEmail = null; _userName = null;
+        document.getElementById('app').style.display = 'none';
+        document.getElementById('signin-screen').style.display = 'flex';
+        if (window.google?.accounts?.id) google.accounts.id.disableAutoSelect();
+        const err = new Error('Session expired — please sign in again');
+        err.status = resp.status;
+        throw err;
+    }
     if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        const e = new Error(err.error || `HTTP ${resp.status}`);
+        const errBody = await resp.json().catch(() => ({}));
+        const e = new Error(errBody.error || `HTTP ${resp.status}`);
         e.status = resp.status;
         throw e;
     }
@@ -123,10 +142,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const savedName  = sessionStorage.getItem('ptg_name');
     if (savedToken && savedEmail) {
         _idToken = savedToken; _userEmail = savedEmail; _userName = savedName || savedEmail;
-        // Re-validate token on load
+        // Re-validate token on load — if expired, GSI will prompt re-sign-in automatically
         apiFetch('/auth/check', 'GET')
             .then(() => showApp())
             .catch(() => {
+                // Token invalid/expired — clear and show sign-in screen (GSI auto_select will re-authenticate)
                 sessionStorage.removeItem('ptg_token');
                 sessionStorage.removeItem('ptg_email');
                 sessionStorage.removeItem('ptg_name');
