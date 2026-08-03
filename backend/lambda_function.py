@@ -14,6 +14,8 @@ import hashlib
 import traceback
 import base64
 import io
+import urllib.request
+import urllib.parse
 import openpyxl
 from collections import OrderedDict
 from datetime import datetime
@@ -21,10 +23,48 @@ from datetime import datetime
 REGION = "us-east-1"
 MODEL_ID = "us.anthropic.claude-sonnet-4-6"
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+ALLOWED_DOMAIN   = os.environ.get("ALLOWED_DOMAIN", "company-domain.com")
 
 bedrock = boto3.client("bedrock-runtime", region_name=REGION)
 s3 = boto3.client("s3", region_name=REGION)
 lam = boto3.client("lambda", region_name=REGION)
+
+
+# ── Auth helpers ──────────────────────────────────────────────────────────────
+
+def verify_id_token(id_token):
+    """Verify Google ID token via tokeninfo. Returns email or None."""
+    try:
+        url = "https://oauth2.googleapis.com/tokeninfo?id_token=" + urllib.parse.quote(id_token)
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            info = json.loads(resp.read())
+            if info.get("aud") != GOOGLE_CLIENT_ID:
+                return None
+            email = info.get("email", "").lower()
+            if not email.endswith("@" + ALLOWED_DOMAIN):
+                return None
+            return email
+    except Exception:
+        return None
+
+
+def require_auth(event):
+    """
+    Extract and verify the Bearer token from the request.
+    Returns (email, None) on success or (None, error_response) on failure.
+    Skips auth when GOOGLE_CLIENT_ID is not configured (dev/test mode).
+    """
+    if not GOOGLE_CLIENT_ID:
+        return "dev", None   # auth not configured — allow through (deploy.sh warns)
+    headers = event.get("headers") or {}
+    auth = headers.get("Authorization") or headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        return None, cors_response(401, json.dumps({"error": "Missing Authorization header"}))
+    email = verify_id_token(auth[7:])
+    if not email:
+        return None, cors_response(403, json.dumps({"error": "Invalid token or unauthorised domain"}))
+    return email, None
 
 # ── Per-group system prompt ───────────────────────────────────────────────────
 
@@ -312,6 +352,23 @@ def handler(event, context):
 
     if method == "OPTIONS":
         return cors_response(200, "")
+
+    # Internal async worker paths invoked by Lambda directly — skip auth
+    if path in ("/__process", "/__process-gcp", "/__process-azure", "/__parse-azure"):
+        if path == "/__process":
+            return handle_process(event)
+        if path == "/__process-gcp":
+            return handle_process_gcp(event)
+        if path == "/__parse-azure":
+            return handle_do_parse_azure(event)
+        if path == "/__process-azure":
+            return handle_process_azure(event)
+
+    # All public API routes require a valid token
+    _, auth_err = require_auth(event)
+    if auth_err:
+        return auth_err
+
     if path == "/api/generate":
         return handle_generate(event)
     if path == "/api/generate-gcp":
@@ -322,16 +379,8 @@ def handler(event, context):
         return handle_parse_gcp(event)
     if path == "/api/parse-azure":
         return handle_parse_azure(event)
-    if path == "/__parse-azure":
-        return handle_do_parse_azure(event)
-    if path == "/__process":
-        return handle_process(event)
-    if path == "/__process-gcp":
-        return handle_process_gcp(event)
     if path == "/api/generate-azure":
         return handle_generate_azure(event)
-    if path == "/__process-azure":
-        return handle_process_azure(event)
     return cors_response(404, json.dumps({"error": f"Not found: {path}"}))
 
 

@@ -72,6 +72,8 @@ Resources:
         Variables:
           S3_BUCKET: !Ref BucketName
           WORKER_FUNCTION: pricing-table-generator
+          GOOGLE_CLIENT_ID: !Ref GoogleClientId
+          ALLOWED_DOMAIN: !Ref AllowedDomain
 
   GeneratePermission:
     Type: AWS::Lambda::Permission
