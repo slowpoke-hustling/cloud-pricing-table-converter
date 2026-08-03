@@ -11,8 +11,8 @@ Parameters:
     Description: Google OAuth client ID for Sign-In button verification
   AllowedDomain:
     Type: String
-    Default: company-domain.com
-    Description: Email domain allowed to access this tool
+    Default: ''
+    Description: Email domain allowed to access this tool (e.g. example.com)
 
 Resources:
 

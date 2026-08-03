@@ -21,7 +21,7 @@ window.onGoogleSignIn = async function(credentialResponse) {
         await apiFetch('/auth/check', 'GET');
     } catch (e) {
         if (e.status === 403) {
-            showSigninError(`${_userEmail} is not authorised. Only @company-domain.com accounts are allowed.`);
+            showSigninError(`${_userEmail} is not authorised. Contact your administrator.`);
         } else {
             showSigninError('Sign-in failed: ' + (e.message || 'Unknown error'));
         }

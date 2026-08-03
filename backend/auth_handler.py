@@ -6,7 +6,7 @@ import urllib.request
 import urllib.parse
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
-ALLOWED_DOMAIN   = os.environ.get("ALLOWED_DOMAIN", "company-domain.com")
+ALLOWED_DOMAIN   = os.environ.get("ALLOWED_DOMAIN", "")
 
 # In-memory token cache: token_hash -> (email, expires_at_unix)
 # Avoids calling Google tokeninfo on every request for the same token.

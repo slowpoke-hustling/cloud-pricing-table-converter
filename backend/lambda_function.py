@@ -25,7 +25,7 @@ REGION = "us-east-1"
 MODEL_ID = "us.anthropic.claude-sonnet-4-6"
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
-ALLOWED_DOMAIN   = os.environ.get("ALLOWED_DOMAIN", "company-domain.com")
+ALLOWED_DOMAIN   = os.environ.get("ALLOWED_DOMAIN", "")
 
 bedrock = boto3.client("bedrock-runtime", region_name=REGION)
 s3 = boto3.client("s3", region_name=REGION)
