@@ -70,6 +70,20 @@ if [ "$TEMPLATE_HASH" != "$PREV_HASH" ] || [ -n "$GOOGLE_CLIENT_ID" ]; then
         --profile $PROFILE \
         --region $REGION
     echo "$TEMPLATE_HASH" > "$HASH_FILE"
+
+    # Force a new API Gateway deployment so CORS/method changes go live immediately
+    API_ID=$(aws cloudformation describe-stacks \
+        --stack-name $STACK_NAME \
+        --query 'Stacks[0].Outputs[?OutputKey==`ApiUrl`].OutputValue' \
+        --output text --profile $PROFILE --region $REGION 2>/dev/null | grep -o '[a-z0-9]*\.execute-api' | cut -d. -f1)
+    if [ -n "$API_ID" ]; then
+        aws apigateway create-deployment \
+            --rest-api-id "$API_ID" \
+            --stage-name prod \
+            --description "deploy.sh forced redeploy" \
+            --profile $PROFILE --region $REGION > /dev/null 2>&1 || true
+        echo "  API Gateway redeployed"
+    fi
 else
     echo "  Template unchanged — skipping CloudFormation deploy"
 fi
