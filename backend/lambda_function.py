@@ -964,7 +964,7 @@ def assemble_gcp_html(meta, groups, chunks, done_chunks):
     # Build group lookup from chunks (chunk_data is the full group object)
     gcp_groups = {c["group_name"]: c["chunk_data"] for c in chunks}
 
-    GRP_STYLE = "background-color:#1a73e8;color:#fff;font-weight:bold;"
+    GRP_STYLE = "background-color:#4a90e8;color:#fff;font-weight:bold;"
     rows_html = []
     for row_num, gname in enumerate(groups, 1):
         g = gcp_groups.get(gname, {})
@@ -1445,7 +1445,7 @@ def assemble_azure_html(meta, groups, chunks, done_chunks):
     # Build group lookup from chunks
     azure_groups = {c["group_name"]: c["chunk_data"] for c in chunks}
 
-    GRP_STYLE = "background-color:#0078d4;color:#fff;font-weight:bold;"
+    GRP_STYLE = "background-color:#2e96e8;color:#fff;font-weight:bold;"
     rows_html = []
     for row_num, gname in enumerate(groups, 1):
         g = azure_groups.get(gname, {})
