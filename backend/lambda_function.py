@@ -14,6 +14,7 @@ import hashlib
 import traceback
 import base64
 import io
+import time
 import urllib.request
 import urllib.parse
 import openpyxl
@@ -33,8 +34,27 @@ lam = boto3.client("lambda", region_name=REGION)
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
+# In-memory token cache: token_hash → (email, expires_at_unix)
+# Avoids calling Google's tokeninfo on every request for the same token.
+# Lambda instance lifetime is typically minutes to hours, so tokens expire
+# naturally (Google ID tokens are valid for 1 hour).
+_token_cache: dict = {}
+
 def verify_id_token(id_token):
-    """Verify Google ID token via tokeninfo. Returns email or None."""
+    """Verify Google ID token via tokeninfo. Returns email or None.
+    Result is cached in Lambda memory by token hash for the token's lifetime."""
+    token_hash = hashlib.sha256(id_token.encode()).hexdigest()
+
+    # Check cache first
+    cached = _token_cache.get(token_hash)
+    if cached:
+        email, expires_at = cached
+        if time.time() < expires_at:
+            return email
+        else:
+            del _token_cache[token_hash]
+
+    # Verify with Google
     try:
         url = "https://oauth2.googleapis.com/tokeninfo?id_token=" + urllib.parse.quote(id_token)
         with urllib.request.urlopen(url, timeout=5) as resp:
@@ -44,6 +64,10 @@ def verify_id_token(id_token):
             email = info.get("email", "").lower()
             if not email.endswith("@" + ALLOWED_DOMAIN):
                 return None
+            # Cache until token expiry (exp claim) minus 30s safety margin
+            exp = int(info.get("exp", 0))
+            if exp:
+                _token_cache[token_hash] = (email, exp - 30)
             return email
     except Exception:
         return None
