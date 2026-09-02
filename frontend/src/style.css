@@ -206,6 +206,10 @@ body {
    overflowing the shared flex row. */
 .tool-panel {
     display: flex; flex: 1; min-height: 0;
+    /* stretch is the default, but declare it so both columns are forced to the
+       row height rather than sizing to their own content — required for the
+       children's overflow-y to activate */
+    align-items: stretch;
     gap: 16px; padding: 0 22px 20px;
 }
 
@@ -219,8 +223,12 @@ body {
     width: 312px; min-width: 312px; flex-shrink: 0;
     padding: 20px 18px;
     display: block;                 /* was flex — see note above */
-    overflow-y: auto; overflow-x: hidden;
+    /* height:100% + min-height:0 is the pair that makes a flex item scroll.
+       Without the explicit height the item sizes to its content, so overflow-y
+       never engages and anything past the viewport becomes unreachable. */
+    height: 100%;
     min-height: 0;
+    overflow-y: auto; overflow-x: hidden;
     overscroll-behavior: contain;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -405,7 +413,10 @@ input[type="number"].rate-input,
 
 /* ═══ Preview column ═════════════════════════════════════════════════════════ */
 .preview-panel {
-    flex: 1; min-width: 0; min-height: 0;
+    flex: 1; min-width: 0;
+    /* same height:100% + min-height:0 pairing as .input-panel */
+    height: 100%;
+    min-height: 0;
     overflow-y: auto; overscroll-behavior: contain;
     padding: 20px;
     background: var(--surface);
@@ -607,12 +618,16 @@ input[type="number"].rate-input,
         padding: 0 14px 16px;
         overflow-y: auto; overscroll-behavior: contain;
     }
+    /* Stacked: the parent scrolls, so release the fixed heights that make the
+       columns scroll independently on wide screens */
     .input-panel {
         width: 100%; min-width: 0;
+        height: auto;
         overflow: visible;          /* parent scrolls instead */
         flex-shrink: 1;
     }
     .preview-panel {
+        height: auto;
         min-height: 400px;
         overflow: visible;          /* parent scrolls instead */
     }

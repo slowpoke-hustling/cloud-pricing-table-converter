@@ -1,5 +1,25 @@
 # Changelog — Cloud Pricing Table Converter
 
+## v4.2 — 2026-08-03
+**Actually fix the left sidebar scroll — the v4.1 attempt was incomplete**
+
+### Bugs fixed
+- **Left sidebar still could not scroll**, so the "Click Here to Get Your Table" button was cut off at the viewport bottom with no way to reach it. v4.1 set `overflow-y: auto` and `min-height: 0` on `.input-panel` and assumed that was sufficient — it was not.
+
+  The panel is a flex *item* inside `.tool-panel` (a `display: flex` row). A flex item with default `align-self: stretch` sizes on the cross axis from its own content, so it simply grew taller than the row and `overflow-y` never engaged. `min-height: 0` only removes the automatic minimum; it does not give the item a resolved height to overflow *against*.
+
+  The working fix is `height: 100%` **paired with** `min-height: 0` on each column, which forces the item to resolve against the row height instead of its content:
+  - `.input-panel` — added `height: 100%`
+  - `.preview-panel` — added `height: 100%` (same latent issue; long estimates would have hit it too)
+  - `.tool-panel` — declared `align-items: stretch` explicitly. It is the default, but stating it makes the dependency obvious to anyone editing this later
+- Released both heights back to `auto` inside the `max-width: 920px` block — when stacked, the parent scrolls, so forcing full viewport height on each column would have broken the mobile layout
+
+### Notes
+- Verified live: the served stylesheet has `height: 100%` + `min-height: 0` + `overflow-y: auto` on both columns, and `align-items: stretch` on the row
+- Payload 23.2 KB gzipped
+- All seven API endpoints re-verified returning 403 on a fake token
+- No JavaScript changed; all 58 element IDs and 15 generated classes re-verified intact
+
 ## v4.1 — 2026-08-03
 **Warm earthy palette replacing the dark theme, plus a sidebar scroll-trap fix**
 
