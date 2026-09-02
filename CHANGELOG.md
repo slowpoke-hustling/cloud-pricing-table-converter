@@ -1,5 +1,35 @@
 # Changelog — Cloud Pricing Table Converter
 
+## v4.1 — 2026-08-03
+**Warm earthy palette replacing the dark theme, plus a sidebar scroll-trap fix**
+
+Second visual pass. The v4.0 dark violet/cyan scheme was replaced with a warm
+espresso / terracotta / sand palette. Still CSS-only for the restyle — all 58
+element IDs, four `classList` toggles, five `querySelector` targets and fifteen
+runtime-generated classes were re-verified intact after.
+
+### Bugs fixed
+- **Left sidebar became unscrollable once the GCP textarea was dragged tall.** `.input-panel` was a flex column and its last child used inline `margin-top: auto`. That auto margin pinned the footer to the panel bottom, so when the textarea grew past the viewport the controls below it could not be reached — including the resize handle needed to shrink it back. Three fixes applied together:
+  - `.input-panel` changed from `display: flex` to `display: block`, so content flows top-down and scrolls normally. Per-child `margin-bottom` restores the rhythm the flex `gap` provided
+  - the three inline `margin-top: auto` wrappers in `index.html` replaced with a `.panel-footer` class that sits in normal flow, separated by a rule
+  - `#gcp-paste-area` capped at `max-height: 46vh` (with `min-height: 80px`), so the drag handle can no longer be pulled off-screen in the first place
+- Added `min-height: 0` to both scrolling columns — without it a flex child refuses to shrink below its content and overflows the row instead of scrolling
+- `overscroll-behavior: contain` on both columns, so reaching the end of one does not start scrolling the page behind it
+
+### Changed
+- `style.css` — full palette replacement. Sand base `#f6f2ec`, espresso ink `#2b2118`, terracotta accent `#b4571f`, with sage / brick / amber for success / error / warning. Shadows are warm-tinted rather than neutral grey, which is most of why the surfaces read as paper rather than plastic
+- Cloud brand colours warmed to sit in the palette: AWS amber-orange, GCP walnut, Azure slate-blue. Active cloud tabs now fill solid with white text; logos get `filter: brightness(0) invert(1)` so they stay legible
+- Removed the aurora backdrop and all `backdrop-filter` glass effects — both belonged to the dark theme and looked muddy on a light base. Replaced with two fixed radial washes on `body`, giving a faint paper grain at no request cost
+- Logo wordmark now leads with a small terracotta rounded-square mark instead of gradient-filled text, which was low-contrast on light
+- Group headers get a tinted `--surface-2` fill so they separate from service rows without relying on the border alone
+- Responsive breakpoint moved 900px → 920px; below it the columns stack and the parent scrolls, with the inner panels set to `overflow: visible` so there is only ever one scroll container
+- `<meta name="color-scheme">` and `theme-color` updated from dark to light
+
+### Notes
+- Payload unchanged at 23.0 KB gzipped
+- All seven API endpoints re-verified returning 403 on a fake token after deploy
+- No JavaScript changed
+
 ## v4.0 — 2026-08-03
 **Visual redesign — dark glass-morphic UI with animated aurora backdrop**
 

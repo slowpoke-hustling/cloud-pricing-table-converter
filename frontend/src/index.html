@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sales Tools</title>
-    <meta name="color-scheme" content="dark">
-    <meta name="theme-color" content="#0a0b14">
+    <meta name="color-scheme" content="light">
+    <meta name="theme-color" content="#f6f2ec">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
@@ -14,10 +14,6 @@
     <meta name="google-signin-client_id" content="__GOOGLE_CLIENT_ID__">
 </head>
 <body>
-
-    <!-- Decorative aurora backdrop — drifting blurred gradient blobs.
-         aria-hidden + pointer-events:none, so it is invisible to AT and to clicks. -->
-    <div class="aurora" aria-hidden="true"><span></span><span></span><span></span></div>
 
     <!-- ── Sign-in screen ── -->
     <div class="signin-screen" id="signin-screen">
@@ -123,7 +119,7 @@
                             <div class="open-prompt aws-prompt" id="aws-open-prompt" style="display:none">
                                 👇 Press the button below to get your proposal table.
                             </div>
-                            <div style="margin-top:auto;padding-top:16px;">
+                            <div class="panel-footer">
                                 <button class="btn-open-table" id="aws-btn-open-table" disabled>Click Here to Get Your Table</button>
                                 <div class="open-hint" id="aws-open-hint" style="display:none">Cmd+A → Cmd+C → paste into Google Doc</div>
                             </div>
@@ -167,7 +163,7 @@
                             <div class="open-prompt gcp-prompt" id="gcp-open-prompt" style="display:none">
                                 👇 Press the button below to get your proposal table.
                             </div>
-                            <div style="margin-top:auto;padding-top:16px;">
+                            <div class="panel-footer">
                                 <button class="btn-open-table" id="gcp-btn-open-table" disabled>Click Here to Get Your Table</button>
                                 <div class="open-hint" id="gcp-open-hint" style="display:none">Cmd+A → Cmd+C → paste into Google Doc</div>
                             </div>
@@ -222,7 +218,7 @@
                             <div class="open-prompt azure-prompt" id="azure-open-prompt" style="display:none">
                                 👇 Press the button below to get your proposal table.
                             </div>
-                            <div style="margin-top:auto;padding-top:16px;">
+                            <div class="panel-footer">
                                 <button class="btn-open-table" id="azure-btn-open-table" disabled>Click Here to Get Your Table</button>
                                 <div class="open-hint" id="azure-open-hint" style="display:none">Cmd+A → Cmd+C → paste into Google Doc</div>
                             </div>
