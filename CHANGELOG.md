@@ -1,5 +1,42 @@
 # Changelog — Cloud Pricing Table Converter
 
+## v4.0 — 2026-08-03
+**Visual redesign — dark glass-morphic UI with animated aurora backdrop**
+
+Full restyle of the app shell. Purely presentational: `style.css` rewritten and
+`index.html` gained one decorative element. **No JS was touched** — all 58 element
+IDs, the four `classList` toggles (`.active` / `.open` / `.ready` / `.dragover`),
+five `querySelector` targets, and fifteen runtime-generated classes were extracted
+from `app.js` first and verified intact after.
+
+### Changed
+- `style.css` — dark theme (`#0a0b14` base) replacing the light grey scheme. Panels are frosted glass (`backdrop-filter: blur(22px) saturate(150%)`) floating over the backdrop rather than flat bordered boxes
+- `index.html` — added a decorative `.aurora` layer: three blurred gradient blobs (violet / cyan / blue) drifting on 26–32s loops. `aria-hidden="true"` and `pointer-events: none`, so it is invisible to assistive tech and never intercepts clicks
+- Accent moved from flat indigo to a violet → blue → cyan gradient, used on the logo wordmark, active tab, primary buttons, and avatar
+- Inter loaded from Google Fonts with `preconnect`, falling back to the previous system stack
+- Cloud tabs are now segmented pills that tint to their brand colour when active, replacing the underline-tab pattern
+- Group cards use a 3px inset left rail for the cloud accent instead of a bottom border — reads more clearly at a glance in a long list
+- Typography: tightened letter-spacing on headings, `tabular-nums` on every cost figure so digits align column-wise
+
+### Micro-interactions
+- Buttons: light sweep on hover, 1.5px lift, press displacement
+- Upload zone: diagonal sheen on hover, scales and glows cyan on `dragover`, icon lifts
+- "Get Your Table": two-beat pulse on becoming ready, then a slow continuous gradient shift
+- Sign-in error shakes horizontally — reads as rejection faster than a colour change alone
+- Group expand, panel switch, and file-selected tick all have short entrance transitions
+- Two easing curves as tokens: `--ease` for settling, `--spring` for slight overshoot
+
+### Accessibility
+- `prefers-reduced-motion` extended to freeze the aurora and all decorative animation, not just transitions
+- `:focus-visible` ring switched to cyan for contrast against the dark surface
+- Added `<meta name="color-scheme" content="dark">` so browser UI and form controls render dark
+- Contrast raised: body text `#f0f2f8`, secondary `#a8afc4`, both well clear of 4.5:1 on the dark base
+
+### Notes
+- First-load payload 20.5 KB → 22.9 KB. The +2.4 KB is the larger stylesheet; still 94% below the 403 KB pre-v3.8 baseline
+- Added a `max-width: 900px` breakpoint stacking the panels vertically — the layout was previously fixed-width only
+- All seven API endpoints re-verified returning 403 on a fake token after deploy: auth intact, nothing crashed
+
 ## v3.8 — 2026-08-03
 **Frontend payload cut 95% (403KB → 20.5KB), cache-busting fixed, accessibility and polish pass**
 

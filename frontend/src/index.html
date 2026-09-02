@@ -4,11 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sales Tools</title>
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#0a0b14">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
     <link rel="stylesheet" href="style.css">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <meta name="google-signin-client_id" content="__GOOGLE_CLIENT_ID__">
 </head>
 <body>
+
+    <!-- Decorative aurora backdrop — drifting blurred gradient blobs.
+         aria-hidden + pointer-events:none, so it is invisible to AT and to clicks. -->
+    <div class="aurora" aria-hidden="true"><span></span><span></span><span></span></div>
 
     <!-- ── Sign-in screen ── -->
     <div class="signin-screen" id="signin-screen">
