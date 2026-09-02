@@ -1,5 +1,25 @@
 # Changelog — Cloud Pricing Table Converter
 
+## v3.7 — 2026-08-03
+**Dead code removal — 418 lines (27%) removed from Lambda**
+
+Since v3.5/v3.6 moved all three clouds to direct itemised assembly, the Claude
+per-chunk worker pipeline became unreachable. Removed it entirely:
+
+- `GROUP_PROMPT`, `GCP_GROUP_PROMPT`, `AZURE_GROUP_PROMPT` — Claude table-generation prompts, no longer used
+- `handle_process`, `handle_process_gcp`, `handle_process_azure` — async chunk workers, never invoked
+- `get_ec2_specs`, `enrich_services_with_specs`, `_spec_cache` — EC2 vCPU/memory lookup via Pricing API, only used by the removed AWS worker
+- `split_group_into_chunks`, `MAX_SERVICES_PER_CHUNK` — chunking logic, output was discarded
+- `OrderedDict` import — only used by removed chunking code
+- `handle_status` chunk-polling loop and `done_chunks` bookkeeping — `total_chunks` is always 0 now
+- `assemble_gcp_html` / `assemble_azure_html` — dropped unused `done_chunks` parameter
+- Router simplified: only `/__parse-azure` remains as an internal async path (Azure xlsx still needs Claude to read the file)
+
+`deploy.sh`: template hash now uses Python hashlib instead of `md5`/`md5sum`
+(neither is reliably on PATH across environments).
+
+Lambda: 1523 → 1105 lines. No functional change — all endpoints verified working.
+
 ## v3.6 — 2026-08-03
 **Google Sign-In auth + GCP/Azure itemised layout**
 

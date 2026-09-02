@@ -51,7 +51,7 @@ aws s3 cp /tmp/auth_handler.zip "s3://$BUCKET/lambda/auth_handler.zip" \
 
 # 3. Deploy CloudFormation
 echo "[3/5] Deploying CloudFormation stack..."
-TEMPLATE_HASH=$(md5 -q "$SCRIPT_DIR/template.yaml" 2>/dev/null || md5sum "$SCRIPT_DIR/template.yaml" | cut -d' ' -f1)
+TEMPLATE_HASH=$(python3 -c "import hashlib,sys; print(hashlib.md5(open(sys.argv[1],'rb').read()).hexdigest())" "$SCRIPT_DIR/template.yaml")
 HASH_FILE="/tmp/ptg-template-hash-${ACCOUNT_ID}"
 PREV_HASH=$(cat "$HASH_FILE" 2>/dev/null || echo "")
 

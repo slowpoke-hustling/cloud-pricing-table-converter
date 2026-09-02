@@ -18,7 +18,6 @@ import time
 import urllib.request
 import urllib.parse
 import openpyxl
-from collections import OrderedDict
 from datetime import datetime
 
 REGION = "us-east-1"
@@ -89,90 +88,6 @@ def require_auth(event):
     if not email:
         return None, cors_response(403, json.dumps({"error": "Invalid token or unauthorised domain"}))
     return email, None
-
-# ── Per-group system prompt ───────────────────────────────────────────────────
-
-GROUP_PROMPT = """You are generating service description lines for an AWS pricing proposal table.
-
-Output ONLY the service lines for the given batch — no <tr> wrapper, no group heading, no totals, no cost lines.
-
-Format each service as:
-ServiceName<br>
-- field: value<br>
-- field: value<br>
-<br>
-
-If the service has a Description, append it to the name with a dash: ServiceName - Description<br>
-If there is NO Description, just use the ServiceName alone with NO dash or trailing punctuation.
-
-(blank <br> line between each service)
-
-## RULES
-- Copy ALL properties from the JSON exactly — do not skip any field unless it matches the exclusions below
-- NEVER add cost/price lines (e.g. "Monthly: $X" or "12 months: $Y") — these are not in the Properties
-- Skip: "Tenancy: Shared Instances", "Region" field, zero/empty/"Not selected" fields (e.g. "DT Inbound: Not selected: 0 TB per month")
-- Skip unit-label-only fields with no number: "Management events units: millions", "Data events units: millions", "Network activity events units: millions", "Insight events units: millions"
-- Skip blank placeholder values: "Number of network activity events: per month" (no number)
-- Skip retention period labels with no value: "Hourly backups warm retention period: Days"
-- "Workload: Consistent, Number of instances: X" → skip the Workload line, show "- Number of instances: X" as a separate line
-- Decimal percentages (0.1, 0.03, 1) → 10%, 3%, 100% for fields like "Estimated annual increase", "Estimated daily change", "Mobile sampling rate"
-- EC2/RDS instance types: the vCPU and Memory values are already provided in the Properties as "vCPU" and "Memory" — include them after the instance type line
-- Pricing strategy: shorten → "Compute Savings Plans 3yr No Upfront", "On Demand", "Reserved 1yr No Upfront"
-- Each field line starts with "- "
-- No &nbsp; indentation
-
-Output ONLY the service lines, nothing else."""
-
-
-MAX_SERVICES_PER_CHUNK = 10  # Max services per Claude call
-
-# ── EC2 spec cache + lookup ───────────────────────────────────────────────────
-_spec_cache = {}
-
-def get_ec2_specs(instance_type):
-    """Look up vCPU and memory for an EC2 instance type via AWS Pricing API."""
-    if not instance_type:
-        return "?", "?"
-    if instance_type in _spec_cache:
-        return _spec_cache[instance_type]
-    try:
-        pricing_client = boto3.client("pricing", region_name="us-east-1")
-        for location in ["Asia Pacific (Singapore)", "Asia Pacific (Malaysia)", "US East (N. Virginia)"]:
-            resp = pricing_client.get_products(
-                ServiceCode="AmazonEC2",
-                Filters=[
-                    {"Type": "TERM_MATCH", "Field": "instanceType", "Value": instance_type},
-                    {"Type": "TERM_MATCH", "Field": "operatingSystem", "Value": "Linux"},
-                    {"Type": "TERM_MATCH", "Field": "tenancy", "Value": "Shared"},
-                    {"Type": "TERM_MATCH", "Field": "capacitystatus", "Value": "Used"},
-                    {"Type": "TERM_MATCH", "Field": "location", "Value": location},
-                ],
-                MaxResults=1,
-            )
-            items = resp.get("PriceList", [])
-            if items:
-                attrs = json.loads(items[0]).get("product", {}).get("attributes", {})
-                result = (attrs.get("vcpu", "?"), attrs.get("memory", "?"))
-                _spec_cache[instance_type] = result
-                return result
-    except Exception as e:
-        print(f"Spec lookup failed for {instance_type}: {e}")
-        traceback.print_exc()
-    _spec_cache[instance_type] = ("?", "?")
-    return "?", "?"
-
-def enrich_services_with_specs(services):
-    """Add vCPU/Memory to EC2/RDS service Properties before sending to Claude."""
-    for svc in services:
-        name = svc.get("Service Name", "")
-        props = svc.get("Properties", {})
-        if "EC2" in name:
-            instance_type = props.get("Advance EC2 instance", "")
-            if instance_type and "vCPU" not in props:
-                vcpu, memory = get_ec2_specs(instance_type)
-                props["vCPU"] = vcpu
-                props["Memory"] = memory
-    return services
 
 def collect_services_recursive(node, path=()):
     """
@@ -292,41 +207,6 @@ def format_service_props_html(svc):
     return "<br>\n".join(lines) + ("<br>" if lines else "")
 
 
-def split_group_into_chunks(group_name, group_data):
-    """
-    Split a group into chunks of MAX_SERVICES_PER_CHUNK services each.
-    Handles any nesting depth — sub_name is now a tuple representing the
-    full path from group root to the Services node (e.g. ('GroupA', 'SubGroup')).
-    """
-    if isinstance(group_data, list):
-        flat = [((), s) for s in group_data]
-    else:
-        flat = collect_services_recursive(group_data)
-
-    is_nested = any(len(path) > 0 for path, _ in flat)
-
-    # Bucket services by their full path tuple
-    sub_buckets = OrderedDict()
-    for path, svc in flat:
-        if path not in sub_buckets:
-            sub_buckets[path] = []
-        sub_buckets[path].append(svc)
-
-    chunks = []
-    for path_key, services in sub_buckets.items():
-        # sub_name: JSON-encode the path tuple so it survives S3 round-trip
-        sub_name = json.dumps(list(path_key)) if path_key else None
-        for i in range(0, len(services), MAX_SERVICES_PER_CHUNK):
-            chunks.append({
-                "group_name": group_name,
-                "chunk_data": {"Services": services[i:i + MAX_SERVICES_PER_CHUNK]},
-                "is_nested": is_nested,
-                "sub_name": sub_name,
-            })
-
-    return chunks if chunks else [{"group_name": group_name, "chunk_data": group_data, "is_nested": False, "sub_name": None}]
-
-
 HTML_WRAPPER = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -377,16 +257,10 @@ def handler(event, context):
     if method == "OPTIONS":
         return cors_response(200, "")
 
-    # Internal async worker paths invoked by Lambda directly — skip auth
-    if path in ("/__process", "/__process-gcp", "/__process-azure", "/__parse-azure"):
-        if path == "/__process":
-            return handle_process(event)
-        if path == "/__process-gcp":
-            return handle_process_gcp(event)
-        if path == "/__parse-azure":
-            return handle_do_parse_azure(event)
-        if path == "/__process-azure":
-            return handle_process_azure(event)
+    # Internal async worker — invoked by Lambda directly, not via API Gateway.
+    # Only the Azure xlsx parser still runs async (it needs Claude to read the file).
+    if path == "/__parse-azure":
+        return handle_do_parse_azure(event)
 
     # All public API routes require a valid token
     _, auth_err = require_auth(event)
@@ -518,19 +392,11 @@ def handle_generate(event):
         customer_name = body.get("customer_name", "").strip() or data.get("Name", "Customer")
         job_id = uuid.uuid4().hex
 
-        # Build chunk list — split large groups into batches of MAX_SERVICES_PER_CHUNK
-        chunks = []
-        groups = []
-        for gname, gdata in data.get("Groups", {}).items():
-            if "To put in RFP" in gname:
-                continue
-            # Normalize gdata to dict if it's a list
-            if isinstance(gdata, list):
-                gdata = {"Services": gdata}
-            group_chunks = split_group_into_chunks(gname, gdata)
-            for c in group_chunks:
-                chunks.append(c)
-            groups.append(gname)
+        # Collect group names — itemised assembly reads services directly from input.json
+        groups = [
+            gname for gname in data.get("Groups", {})
+            if "To put in RFP" not in gname
+        ]
 
         total_monthly = float(data["Total Cost"]["monthly"])
         total_myr = total_monthly * myr_rate
@@ -625,50 +491,10 @@ def handle_status(event):
         meta = json.loads(meta_obj["Body"].read())
         chunks = meta.get("chunks", [])
         groups = meta.get("groups", [])
-        total_chunks = meta.get("total_chunks", len(chunks))
         currency = meta.get("currency", "MYR")
         tax_pct = "9% GST" if currency == "SGD" else "8% SST"
 
-        # Check which chunks are done
-        done_chunks = {}  # chunk_index -> partial_html
-        errors = []
-        for i in range(total_chunks):
-            key = f"jobs/{job_id}/chunk_{i}.json"
-            try:
-                obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
-                result = json.loads(obj["Body"].read())
-                if result.get("error"):
-                    errors.append(f"Chunk {i}: {result['error']}")
-                else:
-                    done_chunks[i] = result
-            except Exception:
-                pass
-
-        if errors:
-            return cors_response(200, json.dumps({"status": "error", "error": "; ".join(errors)}))
-
-        completed = len(done_chunks)
-        # Which groups have all their chunks done
-        groups_done = set()
-        group_chunk_counts = {}
-        for i, c in enumerate(chunks):
-            gname = c["group_name"]
-            group_chunk_counts[gname] = group_chunk_counts.get(gname, [])
-            group_chunk_counts[gname].append(i)
-        for gname, chunk_indices in group_chunk_counts.items():
-            if all(idx in done_chunks for idx in chunk_indices):
-                groups_done.add(gname)
-
-        if completed < total_chunks:
-            return cors_response(200, json.dumps({
-                "status": "processing",
-                "completed": completed,
-                "total": total_chunks,
-                "groups_done": list(groups_done),
-                "groups": groups,
-            }))
-
-        # Azure parse job — check if result is ready
+        # Azure xlsx parse job — the only async path; poll until Claude finishes reading the file
         if meta.get("cloud") == "azure_parse":
             if meta.get("status") == "error":
                 return cors_response(200, json.dumps({"status": "error", "error": meta.get("error", "Parse failed")}))
@@ -677,13 +503,11 @@ def handle_status(event):
                 return cors_response(200, json.dumps({"status": "done", **result}))
             return cors_response(200, json.dumps({"status": "processing"}))
 
-        # GCP job — different assembly path
+        # GCP / Azure table assembly — reads group data straight from meta chunks
         if meta.get("cloud") == "gcp":
-            return assemble_gcp_html(meta, groups, chunks, done_chunks)
-
-        # Azure job — different assembly path
+            return assemble_gcp_html(meta, groups, chunks)
         if meta.get("cloud") == "azure":
-            return assemble_azure_html(meta, groups, chunks, done_chunks)
+            return assemble_azure_html(meta, groups, chunks)
 
         # All chunks done — build itemised table: one row per group/sub-group heading + one row per service
         inp = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/input.json")["Body"].read())
@@ -808,113 +632,6 @@ def handle_status(event):
         return cors_response(500, json.dumps({"error": str(e)}))
 
 
-# ── /__process — runs Claude for ONE group ────────────────────────────────────
-
-def handle_process(event):
-    job_id = None
-    chunk_index = 0
-    try:
-        body = json.loads(event.get("body", "{}"))
-        job_id = body["job_id"]
-        chunk_index = body["chunk_index"]
-
-        # Load metadata and input
-        meta = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/meta.json")["Body"].read())
-        inp = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/input.json")["Body"].read())
-        data = inp["data"]
-
-        chunk = meta["chunks"][chunk_index]
-        group_name = chunk["group_name"]
-        sub_name = chunk.get("sub_name")
-        chunk_data = chunk["chunk_data"]
-        clean_name = re.sub(r"^Original Grouping\s*>\s*", "", group_name).strip()
-        context_label = f"{clean_name}" + (f" / {sub_name}" if sub_name else "")
-
-        services = chunk_data.get("Services", [])
-        # Enrich EC2 services with vCPU/Memory from AWS Pricing API
-        services = enrich_services_with_specs(services)
-        # Log first EC2 to verify enrichment
-        for s in services:
-            if "EC2" in s.get("Service Name",""):
-                print(f"EC2 props after enrichment: vCPU={s['Properties'].get('vCPU','MISSING')} Memory={s['Properties'].get('Memory','MISSING')}")
-                break
-        svc_total = sum(float(s["Service Cost"]["monthly"]) for s in services)
-
-        user_msg = f"""Group context: {context_label}
-Services total: USD {svc_total:,.2f}
-Number of services in this batch: {len(services)}
-
-Services JSON:
-{json.dumps({"Services": services}, indent=2)}"""
-
-        response = bedrock.invoke_model(
-            modelId=MODEL_ID,
-            body=json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 8000,
-                "system": GROUP_PROMPT,
-                "messages": [{"role": "user", "content": user_msg}],
-            }),
-            contentType="application/json",
-            accept="application/json",
-        )
-
-        partial_html = json.loads(response["body"].read())["content"][0]["text"].strip()
-        partial_html = re.sub(r"^```html?\s*", "", partial_html)
-        partial_html = re.sub(r"\s*```$", "", partial_html)
-
-        s3.put_object(
-            Bucket=S3_BUCKET,
-            Key=f"jobs/{job_id}/chunk_{chunk_index}.json",
-            Body=json.dumps({
-                "partial_html": partial_html,
-                "group_name": group_name,
-                "sub_name": sub_name,
-            }).encode(),
-            ContentType="application/json",
-        )
-
-    except Exception as e:
-        traceback.print_exc()
-        if job_id is not None:
-            try:
-                s3.put_object(
-                    Bucket=S3_BUCKET,
-                    Key=f"jobs/{job_id}/chunk_{chunk_index}.json",
-                    Body=json.dumps({"error": str(e)}).encode(),
-                    ContentType="application/json",
-                )
-            except Exception:
-                pass
-
-    return cors_response(200, "")
-
-
-GCP_GROUP_PROMPT = """You are generating service description lines for a GCP pricing proposal table.
-
-The input is structured data parsed from a GCP Calculator estimate page. Each service has a name, total cost, and a list of fields (key/value pairs).
-
-Output ONLY the service lines for the given group — no <tr> wrapper, no group heading, no totals row.
-
-Format each service as:
-ServiceName<br>
-- field: value<br>
-- field: value<br>
-<br>
-
-(blank <br> line between each service)
-
-## RULES
-- Use the service name exactly as given
-- Output EVERY field in the fields list — do not skip, filter, or judge any field
-- Every field line MUST start with "- "
-- No trailing dash or punctuation after service name
-- If a service has zero fields, just output the service name line followed by a blank <br>
-- The cost column is handled separately — do NOT add any cost or price values
-
-Output ONLY the service lines, nothing else."""
-
-
 GCP_HTML_WRAPPER = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -955,7 +672,7 @@ GCP_HTML_WRAPPER = """<!DOCTYPE html>
 
 # ── GCP HTML assembly ─────────────────────────────────────────────────────────
 
-def assemble_gcp_html(meta, groups, chunks, done_chunks):
+def assemble_gcp_html(meta, groups, chunks):
     currency = meta.get("currency", "MYR")
     tax_pct = "9% GST" if currency == "SGD" else "8% SST"
     calc_url = meta.get("calc_url", "")
@@ -1083,57 +800,6 @@ def handle_generate_gcp(event):
         return cors_response(500, json.dumps({"error": str(e)}))
 
 
-# ── /__process-gcp ────────────────────────────────────────────────────────────
-
-def handle_process_gcp(event):
-    job_id = None
-    chunk_index = 0
-    try:
-        body = json.loads(event.get("body", "{}"))
-        job_id = body["job_id"]
-        chunk_index = body["chunk_index"]
-
-        meta = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/meta.json")["Body"].read())
-        chunk = meta["chunks"][chunk_index]
-        group = chunk["chunk_data"]
-        group_name = chunk["group_name"]
-
-        services = group.get("services", [])
-        svc_total = group.get("total", 0)
-        user_msg = f"""Group: {group_name}
-Total: USD {svc_total:,.2f}
-Services:
-{json.dumps(services, indent=2)}"""
-
-        response = bedrock.invoke_model(
-            modelId=MODEL_ID,
-            body=json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 4000,
-                "system": GCP_GROUP_PROMPT,
-                "messages": [{"role": "user", "content": user_msg}],
-            }),
-            contentType="application/json", accept="application/json",
-        )
-        partial_html = json.loads(response["body"].read())["content"][0]["text"].strip()
-        partial_html = re.sub(r"^```html?\s*", "", partial_html)
-        partial_html = re.sub(r"\s*```$", "", partial_html)
-
-        s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/chunk_{chunk_index}.json",
-            Body=json.dumps({"partial_html": partial_html, "group_name": group_name, "sub_name": None}).encode(),
-            ContentType="application/json")
-
-    except Exception as e:
-        traceback.print_exc()
-        if job_id is not None:
-            try:
-                s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/chunk_{chunk_index}.json",
-                    Body=json.dumps({"error": str(e)}).encode(), ContentType="application/json")
-            except Exception:
-                pass
-    return cors_response(200, "")
-
-
 AZURE_PARSE_PROMPT = """You are parsing an Azure pricing estimate exported as Excel (CSV rows).
 
 Each row has these columns: Service category, Service type, Custom name, Region, Description, Estimated monthly cost, Estimated upfront cost.
@@ -1172,29 +838,6 @@ RULES:
 - total = the Total value from the summary rows at the bottom
 - Skip rows where Service category is "Support", or where the row contains "Licensing Program", "Billing Account", "Billing Profile", "Disclaimer", or "All prices shown"
 - Return ONLY the JSON, no explanation, no markdown"""
-
-
-AZURE_GROUP_PROMPT = """You are generating service description lines for an Azure pricing proposal table.
-
-Each service has a name, cost, region, and description (already formatted as bullet points).
-
-Output ONLY the service lines for the given group — no <tr> wrapper, no group heading, no totals row.
-
-Format each service as:
-ServiceName (ServiceType)<br>
-- bullet point<br>
-- bullet point<br>
-<br>
-
-(blank <br> line between each service)
-
-RULES:
-- Use the service name and service type as given
-- Output the description bullet points exactly as provided — one per line starting with "- "
-- Do NOT add any cost or price values
-- No trailing punctuation after service name
-
-Output ONLY the service lines, nothing else."""
 
 
 AZURE_HTML_WRAPPER = """<!DOCTYPE html>
@@ -1385,60 +1028,9 @@ def handle_generate_azure(event):
         return cors_response(500, json.dumps({"error": str(e)}))
 
 
-# ── /__process-azure ──────────────────────────────────────────────────────────
-
-def handle_process_azure(event):
-    job_id = None
-    chunk_index = 0
-    try:
-        body = json.loads(event.get("body", "{}"))
-        job_id = body["job_id"]
-        chunk_index = body["chunk_index"]
-
-        meta = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/meta.json")["Body"].read())
-        chunk = meta["chunks"][chunk_index]
-        group = chunk["chunk_data"]
-        group_name = chunk["group_name"]
-
-        services = group.get("services", [])
-        svc_total = group.get("total", 0)
-        user_msg = f"""Group: {group_name}
-Total: USD {svc_total:,.2f}
-Services:
-{json.dumps(services, indent=2)}"""
-
-        response = bedrock.invoke_model(
-            modelId=MODEL_ID,
-            body=json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 4000,
-                "system": AZURE_GROUP_PROMPT,
-                "messages": [{"role": "user", "content": user_msg}],
-            }),
-            contentType="application/json", accept="application/json",
-        )
-        partial_html = json.loads(response["body"].read())["content"][0]["text"].strip()
-        partial_html = re.sub(r"^```html?\s*", "", partial_html)
-        partial_html = re.sub(r"\s*```$", "", partial_html)
-
-        s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/chunk_{chunk_index}.json",
-            Body=json.dumps({"partial_html": partial_html, "group_name": group_name, "sub_name": None}).encode(),
-            ContentType="application/json")
-
-    except Exception as e:
-        traceback.print_exc()
-        if job_id is not None:
-            try:
-                s3.put_object(Bucket=S3_BUCKET, Key=f"jobs/{job_id}/chunk_{chunk_index}.json",
-                    Body=json.dumps({"error": str(e)}).encode(), ContentType="application/json")
-            except Exception:
-                pass
-    return cors_response(200, "")
-
-
 # ── Azure HTML assembly ───────────────────────────────────────────────────────
 
-def assemble_azure_html(meta, groups, chunks, done_chunks):
+def assemble_azure_html(meta, groups, chunks):
     currency = meta.get("currency", "MYR")
     tax_pct = "9% GST" if currency == "SGD" else "8% SST"
 
