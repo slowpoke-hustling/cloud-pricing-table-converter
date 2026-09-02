@@ -1,24 +1,47 @@
 # Changelog — Cloud Pricing Table Converter
 
 ## v3.7 — 2026-08-03
-**Dead code removal — 418 lines (27%) removed from Lambda**
+**Security hardening, CORS fixes, unified table colours, and 418 lines of dead code removed**
 
-Since v3.5/v3.6 moved all three clouds to direct itemised assembly, the Claude
-per-chunk worker pipeline became unreachable. Removed it entirely:
+### Security
+- `lambda_function.py` — **critical gap closed**: `/api/*` endpoints had no server-side auth. The frontend sent the Bearer token but the backend ignored it, leaving Bedrock and S3 callable by anyone with the API URL. Added `require_auth()` to the router; all public routes now verify the Google ID token and email domain before executing
+- `lambda_function.py`, `auth_handler.py` — token verification result cached in Lambda memory keyed by `sha256(token)`, expiring with the token's own `exp` claim. Cuts ~250ms off every request after the first; only the hashed token and email are held, never the raw token
+- Removed all company, customer, and personal identifiers from source: company domain and name, two customer project names used as code-comment examples, and hardcoded domain defaults (now empty — must be supplied via `ALLOWED_DOMAIN` at deploy time)
+- Rewrote all 53 commits with `git filter-repo` to purge the same identifiers plus AWS account ID, CloudFront ID, API Gateway ID, and Google OAuth client ID from history, then force-pushed both branches
+- `.gitignore` — added `*.pdf`, `*.csv`, `.env*`, `*.pem`, `*.key`, `uploads/`, `jobs/`; untracked `.kiro/settings/mcp.json`
+- Deleted 134 stale `jobs/` folders from S3 (temp processing files containing full pricing JSON)
 
-- `GROUP_PROMPT`, `GCP_GROUP_PROMPT`, `AZURE_GROUP_PROMPT` — Claude table-generation prompts, no longer used
+### Bugs fixed
+- CORS preflight rejected `Authorization` — fixed in **two** places that both needed it: the API Gateway MOCK `OPTIONS` integrations (all six routes) and the Lambda's own `cors_response()` headers. Missing either one blocks the request
+- `deploy.sh` — CloudFormation updated API Gateway method configs but never published them, so the stage kept serving a stale deployment. Added a forced `create-deployment` after every CF deploy
+- `app.js` — `apiFetch` reported genuine network failures and expired tokens both as "Failed to fetch". Now distinguishes them and auto-signs-out on 401/403 with a clear message
+- `deploy.sh` — template hash used `md5`/`md5sum`, neither reliably on PATH; switched to Python hashlib
+
+### Changed
+- GCP and Azure generated tables now use the same `#0000ff` scheme as AWS throughout — column header, group heading rows, divider, and footer links. Previously each cloud used its own brand blue, and group rows were indistinguishable from the column header
+- GCP and Azure `generate` no longer dispatch Lambda workers (`total_chunks=0`), matching AWS. Assembly is synchronous; this also stops wasted Bedrock calls whose output was discarded
+- First status poll reduced 3000ms → 500ms, so tables appear near-instantly
+- Status text for GCP/Azure changed from "Claude is processing…" to "Building table…" (no longer accurate)
+
+### Removed
+Since v3.5/v3.6 moved all three clouds to direct itemised assembly, the Claude per-chunk worker pipeline became unreachable:
+
+- `GROUP_PROMPT`, `GCP_GROUP_PROMPT`, `AZURE_GROUP_PROMPT` — Claude table-generation prompts
 - `handle_process`, `handle_process_gcp`, `handle_process_azure` — async chunk workers, never invoked
-- `get_ec2_specs`, `enrich_services_with_specs`, `_spec_cache` — EC2 vCPU/memory lookup via Pricing API, only used by the removed AWS worker
-- `split_group_into_chunks`, `MAX_SERVICES_PER_CHUNK` — chunking logic, output was discarded
+- `get_ec2_specs`, `enrich_services_with_specs`, `_spec_cache` — EC2 vCPU/memory lookup, only used by the removed AWS worker
+- `split_group_into_chunks`, `MAX_SERVICES_PER_CHUNK` — chunking logic whose output was discarded
 - `OrderedDict` import — only used by removed chunking code
 - `handle_status` chunk-polling loop and `done_chunks` bookkeeping — `total_chunks` is always 0 now
 - `assemble_gcp_html` / `assemble_azure_html` — dropped unused `done_chunks` parameter
-- Router simplified: only `/__parse-azure` remains as an internal async path (Azure xlsx still needs Claude to read the file)
+- Router simplified: only `/__parse-azure` remains internal (Azure xlsx still needs Claude to read the file)
+- `style.css` — dead `.avatar` class and unused `@keyframes spin`
 
-`deploy.sh`: template hash now uses Python hashlib instead of `md5`/`md5sum`
-(neither is reliably on PATH across environments).
+Lambda: 1523 → 1105 lines (27% smaller). No functional change — all six API endpoints plus `/auth/check` verified returning correct responses, no import errors in CloudWatch.
 
-Lambda: 1523 → 1105 lines. No functional change — all endpoints verified working.
+### Known / deferred
+- Lambda still at 512MB — sized for the removed Claude and Pricing API calls; 256MB likely sufficient now but untested against the largest estimate
+- `openpyxl` reinstalled on every deploy (~15s, 286KB zip); a Lambda Layer would fix both
+- No S3 lifecycle rule on `jobs/` — temp files will accumulate again
 
 ## v3.6 — 2026-08-03
 **Google Sign-In auth + GCP/Azure itemised layout**
