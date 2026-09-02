@@ -64,7 +64,7 @@ Since v3.5/v3.6 moved all three clouds to direct itemised assembly, the Claude p
 Lambda: 1523 → 1105 lines (27% smaller). No functional change — all six API endpoints plus `/auth/check` verified returning correct responses, no import errors in CloudWatch.
 
 ### Known / deferred
-- Lambda still at 512MB — sized for the removed Claude and Pricing API calls; 256MB likely sufficient now but untested against the largest estimate
+- Lambda still at 512MB. The Pricing API lookups are gone entirely, and Claude no longer generates tables — but Claude is **still used for parsing** (`handle_parse_gcp` on pasted text, `handle_do_parse_azure` on xlsx). Before dropping to 256MB, test `handle_do_parse_azure`: it loads the whole workbook via `openpyxl` before calling Claude, making it the most memory-hungry path in the app
 - `openpyxl` reinstalled on every deploy (~15s, 286KB zip); a Lambda Layer would fix both
 - No S3 lifecycle rule on `jobs/` — temp files will accumulate again
 
