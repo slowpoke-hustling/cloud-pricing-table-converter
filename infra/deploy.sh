@@ -123,15 +123,28 @@ sed "s|const API_URL = ''|const API_URL = '${API_URL}'|; s|const GOOGLE_CLIENT_I
 # Inject deploy timestamp and Google Client ID into index.html for cache busting + GSI
 sed "s|__DEPLOY_TS__|${DEPLOY_TS}|g; s|__GOOGLE_CLIENT_ID__|${GOOGLE_CLIENT_ID}|g" \
     "$SCRIPT_DIR/../frontend/src/index.html" > /tmp/index.html.deploy
+# Static assets (logos) — immutable, cache hard
 aws s3 sync "$SCRIPT_DIR/../frontend/src/" "s3://$BUCKET/frontend/" \
-    --profile $PROFILE --region $REGION --delete --exclude "app.js" --exclude "index.html" --exclude "style.css"
+    --profile $PROFILE --region $REGION --delete \
+    --exclude "app.js" --exclude "index.html" --exclude "style.css" \
+    --cache-control "public, max-age=31536000"
+
+# CSS and JS — explicit Content-Type is REQUIRED for CloudFront to gzip them.
+# Without it S3 defaults to application/octet-stream, which CloudFront skips.
 aws s3 cp "$SCRIPT_DIR/../frontend/src/style.css" "s3://$BUCKET/frontend/style.css" \
-    --profile $PROFILE --region $REGION --content-type "text/css" \
-    --cache-control "no-cache, no-store, must-revalidate"
-aws s3 cp /tmp/index.html.deploy "s3://$BUCKET/frontend/index.html" \
-    --profile $PROFILE --region $REGION --content-type "text/html"
+    --profile $PROFILE --region $REGION \
+    --content-type "text/css" \
+    --cache-control "public, max-age=300"
 aws s3 cp /tmp/app.js.deploy "s3://$BUCKET/frontend/app.js" \
-    --profile $PROFILE --region $REGION
+    --profile $PROFILE --region $REGION \
+    --content-type "application/javascript" \
+    --cache-control "public, max-age=300"
+
+# index.html — never cache, it carries the ?v={DEPLOY_TS} pointer to the current app.js
+aws s3 cp /tmp/index.html.deploy "s3://$BUCKET/frontend/index.html" \
+    --profile $PROFILE --region $REGION \
+    --content-type "text/html" \
+    --cache-control "no-cache, must-revalidate"
 rm /tmp/app.js.deploy /tmp/index.html.deploy
 
 # Invalidate CloudFront cache on re-deploys

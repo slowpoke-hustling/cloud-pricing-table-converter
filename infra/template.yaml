@@ -469,8 +469,12 @@ Resources:
           ViewerProtocolPolicy: redirect-to-https
           AllowedMethods: [GET, HEAD]
           CachedMethods: [GET, HEAD]
+          # Gzip/Brotli text assets — app.js and style.css compress ~70%
+          Compress: true
           ForwardedValues:
-            QueryString: false
+            # app.js is cache-busted via ?v={deploy_ts}, so the query string
+            # must be forwarded for the new version to be fetched after deploy
+            QueryString: true
         ViewerCertificate:
           CloudFrontDefaultCertificate: true
 

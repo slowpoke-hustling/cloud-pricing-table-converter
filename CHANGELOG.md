@@ -1,6 +1,31 @@
 # Changelog — Cloud Pricing Table Converter
 
-## v3.7 — 2026-08-03
+## v3.8 — 2026-08-03
+**Frontend payload cut 95% (403KB → 20.5KB), cache-busting fixed, accessibility and polish pass**
+
+### Performance
+- **Logos were shipping at full source resolution.** `azure-logo.png` was 3840×2160 (287KB) and `aws-logo.png` 2400×2400 (41KB), both rendered at 20px tall. Resized to 2× display size for retina: 334KB → 4.8KB combined
+- **CloudFront compression was off.** Set `Compress: true` — `app.js` 48KB → 9.5KB, `style.css` 12.5KB → 4KB, `index.html` 15.9KB → 2.8KB
+- **`app.js` was uploaded as `application/octet-stream`**, which CloudFront refuses to compress. `deploy.sh` set an explicit Content-Type for `index.html` and `style.css` but not `app.js`. Now sets `application/javascript`
+- Net first-load transfer: **403.2 KB → 20.5 KB (94.9% smaller)**
+
+### Bugs fixed
+- **Cache-busting never worked.** `index.html` requests `app.js?v={deploy_ts}` but CloudFront had `ForwardedValues.QueryString: false`, so the param was stripped and the stale cached copy served. This is why every deploy needed a manual invalidation and a hard refresh. Now forwards the query string, so a new deploy timestamp fetches fresh JS automatically
+- Cache headers rationalised: logos `max-age=31536000` (immutable), CSS/JS `max-age=300`, `index.html` `no-cache` since it carries the version pointer
+
+### Accessibility
+- Added `:focus-visible` outline on all interactive elements — the app was previously unusable by keyboard, with no visible focus indicator anywhere
+- Added `@media (prefers-reduced-motion: reduce)` — disables all transitions and the spinner animations for users who have motion sensitivity configured at OS level
+
+### Visual
+- `style.css` — added `--shadow-sm/md/lg` and `--t-fast/base` motion tokens so elevation and timing are consistent rather than ad-hoc per rule
+- Buttons: subtle shadow, lift on hover, 1px press displacement
+- Upload area: scales slightly and glows on `dragover`, icon lifts on hover — the drop target was previously hard to distinguish from hover state
+- "Get Your Table" button pulses twice when it becomes ready, then settles
+- Preview rows: full-row hover tint instead of text-colour-only, so the click target is obvious; costs use `tabular-nums` so digits align in a column
+- Preview group cards: 8px radius and hover elevation
+- Sign-in card: larger shadow, subtle entrance animation
+- Scrollbars: 5px → 8px with inset padding and hover state (5px was hard to grab)
 **Security hardening, CORS fixes, unified table colours, and 418 lines of dead code removed**
 
 ### Security
